@@ -43,10 +43,14 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
         logger.warning("GoPlus API error", contract_address=contract_address, error=str(e))
         return True
 
-    result = data.get("result", {}).get(contract_address.lower(), {})
+    if not isinstance(data, dict):
+        logger.warning("GoPlus: unexpected response format", contract_address=contract_address)
+        return True
+    result_map = data.get("result") or {}
+    result = result_map.get(contract_address.lower(), {})
     if not result:
         # Also check without lowercasing for Solana addresses
-        result = data.get("result", {}).get(contract_address, {})
+        result = result_map.get(contract_address, {})
     if not result:
         logger.warning("GoPlus: no result", contract_address=contract_address)
         return True

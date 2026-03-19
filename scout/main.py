@@ -17,6 +17,7 @@ from scout.gate import evaluate
 from scout.ingestion.dexscreener import fetch_trending
 from scout.ingestion.geckoterminal import fetch_trending_pools
 from scout.ingestion.holder_enricher import enrich_holders
+from scout.models import CandidateToken
 from scout.safety import is_safe
 from scout.scorer import score
 
@@ -53,9 +54,15 @@ async def run_cycle(
     all_candidates = aggregate(list(dex_tokens) + list(gecko_tokens))
     stats["tokens_scanned"] = len(all_candidates)
 
-    # Enrich holders (concurrently)
+    # Enrich holders (with concurrency limit to avoid Helius 429s)
+    sem = asyncio.Semaphore(3)
+
+    async def _enrich_with_limit(t: CandidateToken) -> CandidateToken:
+        async with sem:
+            return await enrich_holders(t, session, settings)
+
     enriched = list(await asyncio.gather(
-        *[enrich_holders(token, session, settings) for token in all_candidates]
+        *[_enrich_with_limit(token) for token in all_candidates]
     ))
 
     # BL-020: Compute holder_growth_1h from previous snapshots

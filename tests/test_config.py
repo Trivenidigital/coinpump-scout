@@ -1,5 +1,9 @@
 """Tests for scout.config module."""
 
+from pathlib import Path
+
+import pytest
+
 from scout.config import Settings
 
 
@@ -22,7 +26,8 @@ def test_settings_loads_defaults():
     assert s.MIROFISH_URL == "http://localhost:5001"
     assert s.MIROFISH_TIMEOUT_SEC == 180
     assert s.MAX_MIROFISH_JOBS_PER_DAY == 50
-    assert s.DB_PATH == "scout.db"
+    assert s.DB_PATH == Path("scout.db")
+    assert isinstance(s.DB_PATH, Path)
     assert s.HELIUS_API_KEY == ""
     assert s.MORALIS_API_KEY == ""
     assert s.DISCORD_WEBHOOK_URL == ""
@@ -62,3 +67,14 @@ def test_settings_custom_overrides():
     assert s.CONVICTION_THRESHOLD == 80
     assert s.SCAN_INTERVAL_SECONDS == 30
     assert s.MAX_MIROFISH_JOBS_PER_DAY == 100
+
+
+def test_settings_weight_sum_validation():
+    with pytest.raises(ValueError, match="must sum to 1.0"):
+        Settings(
+            TELEGRAM_BOT_TOKEN="t",
+            TELEGRAM_CHAT_ID="c",
+            ANTHROPIC_API_KEY="k",
+            QUANT_WEIGHT=0.7,
+            NARRATIVE_WEIGHT=0.4,
+        )

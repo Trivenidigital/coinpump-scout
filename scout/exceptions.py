@@ -5,6 +5,14 @@ class ScoutError(Exception):
     """Base exception for CoinPump Scout."""
 
 
+class IngestionError(ScoutError):
+    """A data source failed to return usable data."""
+
+    def __init__(self, source: str, message: str) -> None:
+        self.source = source
+        super().__init__(f"[{source}] {message}")
+
+
 class ScorerError(ScoutError):
     """Error in scoring logic."""
 

@@ -1,6 +1,8 @@
 """Application configuration via Pydantic BaseSettings."""
 
-from pydantic import field_validator
+from pathlib import Path
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,7 +42,7 @@ class Settings(BaseSettings):
     MORALIS_API_KEY: str = ""
 
     # Database
-    DB_PATH: str = "scout.db"
+    DB_PATH: Path = Path("scout.db")
 
     # Claude fallback
     ANTHROPIC_API_KEY: str
@@ -51,3 +53,11 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [c.strip() for c in v.split(",") if c.strip()]
         return v
+
+    @model_validator(mode="after")
+    def validate_weights_sum(self) -> "Settings":
+        total = self.QUANT_WEIGHT + self.NARRATIVE_WEIGHT
+        if abs(total - 1.0) > 1e-9:
+            msg = f"QUANT_WEIGHT ({self.QUANT_WEIGHT}) + NARRATIVE_WEIGHT ({self.NARRATIVE_WEIGHT}) = {total}, must sum to 1.0"
+            raise ValueError(msg)
+        return self

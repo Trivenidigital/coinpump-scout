@@ -8,6 +8,29 @@
 
 ---
 
+## Design Decisions (Locked In)
+
+These decisions were reviewed and approved. Reference them when implementing P1 items.
+
+**D1 — Scoring normalization:** Keep MIN_SCORE at 60 for initial launch (meaning "60% of max possible"). After enhanced scorer ships, let it run loose for the first week to collect data on what scores real tokens actually produce, then recalibrate MIN_SCORE to 75 (roughly equivalent to old 60 on the 125-point normalized scale). Do not change the gate value during implementation.
+
+**D2 — Buy pressure fields:** Add `txns_h1_buys: int | None = None` and `txns_h1_sells: int | None = None` to CandidateToken as Optional fields. Parser populates where available (DexScreener `txns.h1.buys` / `txns.h1.sells`). Scorer treats `None` as 0 points for buy pressure — graceful degradation if the field is missing from the API response.
+
+**D3 — Score velocity parameter injection:** Pass `historical_scores: list[float] | None = None` into the scorer as a parameter. Keeps scorer a pure function — no DB access, fully testable. The caller (main.py) does the DB read and passes historical scores in. This is the correct pattern: I/O at the edges, pure logic in the core.
+
+**D4 — Qwen migration order:** Do Qwen migration first as an isolated change (BL-001) before the enhanced scorer. Clean swap: replace `anthropic.AsyncAnthropic` with `openai.AsyncOpenAI(base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", api_key=...)`, change model string to `qwen-plus`. One file change, fully testable, zero risk to other modules. Pause for review between Qwen migration and enhanced scorer.
+
+**D5 — Implementation order for enhanced scorer:** Execute P1 items in this sequence:
+1. BL-011 (buy pressure) — new CandidateToken fields + parser + signal
+2. BL-012 (age bell curve) — replace existing signal, no new fields
+3. BL-010 (hard disqualifiers) — liquidity floor pre-filter
+4. BL-014 (co-occurrence multiplier) — structural scoring change
+5. BL-013 (score velocity) — DB table + parameter injection
+6. BL-016 (normalization) — adjust scale after all signals added
+7. BL-015 (confidence tag) — enriches MiroFish seed last
+
+---
+
 ## P0 — Blocking
 
 ### BL-001: Migrate fallback scorer from Anthropic to Qwen (OpenAI-compatible)
@@ -54,7 +77,7 @@
 **Files:** scout/models.py, scout/ingestion/dexscreener.py, scout/scorer.py, tests/
 **Why:** Best wash-trade discriminator available from existing API data. DexScreener returns `txns.h1.buys` and `txns.h1.sells` — currently unused.
 **Changes:**
-- Add `buys_1h: int = 0` and `sells_1h: int = 0` fields to CandidateToken
+- Add `txns_h1_buys: int | None = None` and `txns_h1_sells: int | None = None` to CandidateToken (see Decision D2)
 - Parse from DexScreener response in `from_dexscreener()`
 - Score: buy_ratio > 65% → +15 points
 **Acceptance:** Tokens with skewed buy pressure score higher than balanced volume tokens
@@ -78,8 +101,8 @@
 **Changes:**
 - Add `score_history` table in db.py (contract_address, score, scanned_at)
 - Log each score in main.py after scoring
-- In scorer: accept `previous_scores: list[int]` param, award +10 if strictly increasing over last 3 scans
-- Scorer remains pure (no I/O) — main.py passes historical scores in
+- In scorer: accept `historical_scores: list[float] | None = None` param, award +10 if strictly increasing over last 3 scans (see Decision D3)
+- Scorer remains pure (no I/O) — main.py does the DB read and passes historical scores in
 **Acceptance:** Tokens with rising scores get bonus, flat/declining scores get nothing
 
 ### BL-014: Add co-occurrence multiplier

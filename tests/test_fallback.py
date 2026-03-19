@@ -1,4 +1,4 @@
-"""Tests for LLM fallback narrative scorer (OpenAI-compatible)."""
+"""Tests for Claude API fallback narrative scorer."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock
@@ -21,19 +21,19 @@ SAMPLE_SEED = {
 }
 
 
-def _mock_openai_response(content: str):
-    """Create a mock OpenAI chat completion response."""
-    choice = MagicMock()
-    choice.message.content = content
-    response = MagicMock()
-    response.choices = [choice]
-    return response
+def _mock_claude_response(content: str):
+    """Create a mock anthropic message response."""
+    msg = MagicMock()
+    block = MagicMock()
+    block.text = content
+    msg.content = [block]
+    return msg
 
 
 def _make_mock_client(content: str) -> AsyncMock:
-    """Create a mock AsyncOpenAI client with a pre-configured response."""
+    """Create a mock AsyncAnthropic client."""
     mock_client = AsyncMock()
-    mock_client.chat.completions.create.return_value = _mock_openai_response(content)
+    mock_client.messages.create.return_value = _mock_claude_response(content)
     return mock_client
 
 
@@ -56,7 +56,7 @@ async def test_fallback_parses_json_response():
 
 @pytest.mark.asyncio
 async def test_fallback_extracts_json_from_markdown():
-    """LLM sometimes wraps JSON in ```json code blocks."""
+    """Claude sometimes wraps JSON in ```json code blocks."""
     content = '```json\n{"narrative_score": 80, "virality_class": "High", "summary": "Very viral."}\n```'
     mock_client = _make_mock_client(content)
 
@@ -75,12 +75,10 @@ async def test_fallback_uses_correct_model():
     })
     mock_client = _make_mock_client(response_json)
 
-    await score_narrative_fallback(
-        SAMPLE_SEED, "test-api-key", model_name="qwen-plus", client=mock_client,
-    )
+    await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
 
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    assert call_kwargs["model"] == "qwen-plus"
+    call_kwargs = mock_client.messages.create.call_args.kwargs
+    assert call_kwargs["model"] == "claude-haiku-4-5-20251001"
     assert call_kwargs["max_tokens"] == 300
 
 
@@ -95,8 +93,7 @@ async def test_fallback_sends_system_and_user_messages():
 
     await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
 
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    messages = call_kwargs["messages"]
-    assert messages[0]["role"] == "system"
-    assert messages[1]["role"] == "user"
-    assert messages[1]["content"] == SAMPLE_SEED["prompt"]
+    call_kwargs = mock_client.messages.create.call_args.kwargs
+    assert call_kwargs["system"] is not None
+    assert call_kwargs["messages"][0]["role"] == "user"
+    assert call_kwargs["messages"][0]["content"] == SAMPLE_SEED["prompt"]

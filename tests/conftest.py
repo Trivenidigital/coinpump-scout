@@ -9,7 +9,7 @@ from scout.models import CandidateToken
 @pytest.fixture
 def settings_factory():
     def _make(**overrides):
-        defaults = dict(TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", LLM_API_KEY="k")
+        defaults = dict(TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k")
         defaults.update(overrides)
         return Settings(**defaults)
     return _make

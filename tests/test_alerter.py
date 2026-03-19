@@ -13,7 +13,7 @@ def _settings(**overrides) -> Settings:
     defaults = dict(
         TELEGRAM_BOT_TOKEN="test-bot-token",
         TELEGRAM_CHAT_ID="test-chat-id",
-        LLM_API_KEY="k",
+        ANTHROPIC_API_KEY="k",
         DISCORD_WEBHOOK_URL="",
     )
     defaults.update(overrides)

@@ -9,7 +9,7 @@ from scout.scorer import score, confidence, _token_age_score, _market_cap_tier_s
 
 def _settings(**overrides) -> Settings:
     defaults = dict(
-        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", LLM_API_KEY="k",
+        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k",
         HELIUS_API_KEY="", MORALIS_API_KEY="",
     )
     defaults.update(overrides)

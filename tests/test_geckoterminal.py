@@ -10,7 +10,7 @@ from scout.ingestion.geckoterminal import fetch_trending_pools
 
 def _settings(**overrides) -> Settings:
     defaults = dict(
-        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", LLM_API_KEY="k",
+        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k",
         CHAINS=["solana"],
         MIN_MARKET_CAP=10000, MAX_MARKET_CAP=500000,
     )

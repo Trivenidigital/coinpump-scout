@@ -72,12 +72,7 @@ async def _get_narrative_score(
     except (MiroFishTimeoutError, MiroFishConnectionError) as e:
         logger.warning("MiroFish failed, falling back to LLM", contract_address=token.contract_address, error=str(e))
         try:
-            result = await score_narrative_fallback(
-                seed,
-                api_key=settings.LLM_API_KEY,
-                base_url=settings.LLM_BASE_URL,
-                model_name=settings.LLM_MODEL_NAME,
-            )
+            result = await score_narrative_fallback(seed, settings.ANTHROPIC_API_KEY)
             await db.log_mirofish_job(token.contract_address)
             return result.narrative_score
         except Exception as e:

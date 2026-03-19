@@ -11,7 +11,7 @@ from scout.models import CandidateToken, MiroFishResult
 
 def _settings(**overrides) -> Settings:
     defaults = dict(
-        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", LLM_API_KEY="k",
+        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k",
         CONVICTION_THRESHOLD=70, QUANT_WEIGHT=0.6, NARRATIVE_WEIGHT=0.4,
         MIN_SCORE=60, MAX_MIROFISH_JOBS_PER_DAY=50,
     )

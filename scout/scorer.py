@@ -2,24 +2,29 @@
 
 Scoring weights (must always document rationale):
 - vol_liq_ratio (>MIN_VOL_LIQ_RATIO): 30 points -- Primary pump precursor
-- market_cap_range (MIN-MAX_MARKET_CAP): 20 points -- Pre-discovery range
+- market_cap_tier (graduated $10K-$500K): 8/5/2 pts -- Sweet spot curve (BL-031)
 - holder_growth (>20 new/hour): 25 points -- Organic accumulation
 - token_age (bell curve, peak 1-3 days): 10 points -- Early stage optimal window
 - social_mentions (>50 in 24h): 15 points -- CT discovery signal (optional)
 - buy_pressure (buy_ratio > 65%): 15 points -- Wash trade discriminator (BL-011)
 - score_velocity (rising across 3 scans): 10 points -- Active accumulation (BL-013)
+- unique_buyers (high relative to txns): 15 points -- Organic vs bot (BL-021)
+- solana_bonus: 5 points -- Meme premium (BL-030)
+- small_txn_ratio (>60% small txns): 5 points -- Organic distribution (BL-024)
 
-Raw max: 125 points -> normalized to 0-100 scale (BL-016)
+Raw max: 138 points -> normalized to 0-100 scale (BL-016)
 Co-occurrence multiplier applied after normalization (BL-014)
 
-Hard disqualifiers (BL-010):
-- Liquidity < MIN_LIQUIDITY_USD -> score 0, skip all signals
+Hard disqualifiers:
+- Liquidity < MIN_LIQUIDITY_USD -> score 0 (BL-010)
+- Top-3 wallet concentration > 40% -> score 0 (BL-022)
+- Deployer holds > 20% supply -> score 0 (BL-023)
 """
 
 from scout.config import Settings
 from scout.models import CandidateToken
 
-RAW_MAX = 125
+RAW_MAX = 138
 
 
 def score(
@@ -40,8 +45,18 @@ def score(
         (score, signals_fired) where score is 0-100 and signals_fired
         is a list of signal names that contributed to the score.
     """
-    # BL-010: Hard disqualifier -- liquidity floor
+    # === Hard disqualifiers (fail fast, return score 0) ===
+
+    # BL-010: Liquidity floor
     if token.liquidity_usd < settings.MIN_LIQUIDITY_USD:
+        return (0, [])
+
+    # BL-022: Wash trade detection -- top-3 wallet volume concentration > 40%
+    if token.top3_wallet_concentration > 0.40:
+        return (0, [])
+
+    # BL-023: Deployer supply concentration > 20% (rug risk)
+    if token.deployer_supply_pct > 0.20:
         return (0, [])
 
     points = 0
@@ -58,12 +73,12 @@ def score(
             signals.append("vol_liq_ratio")
             vol_liq_fired = True
 
-    # Signal 2: Market Cap Range -- 20 points
-    # Pre-discovery sweet spot: large enough to have real liquidity,
-    # small enough to have significant upside potential
-    if settings.MIN_MARKET_CAP <= token.market_cap_usd <= settings.MAX_MARKET_CAP:
-        points += 20
-        signals.append("market_cap_range")
+    # Signal 2: Market Cap Tier -- 8/5/2 points (BL-031: graduated curve)
+    # $10K-$100K is peak score, tapers through $500K
+    mcap_pts = _market_cap_tier_score(token.market_cap_usd, settings)
+    if mcap_pts > 0:
+        points += mcap_pts
+        signals.append("market_cap_tier")
 
     # Signal 3: Holder Growth -- 25 points
     # Organic accumulation: new wallets acquiring the token indicates
@@ -76,7 +91,6 @@ def score(
 
     # Signal 4: Token Age -- 10 points (BL-012: bell curve)
     # Peak window is 1-3 days; too early = no liquidity, too late = dead
-    # 0 pts for < 12h, 5 pts for 12-24h, 10 pts for 1-3d, 5 pts for 3-5d, 0 pts for > 5d
     age_pts = _token_age_score(token.token_age_days)
     if age_pts > 0:
         points += age_pts
@@ -90,7 +104,6 @@ def score(
 
     # Signal 6: Buy Pressure Ratio -- 15 points (BL-011)
     # Best wash-trade discriminator from existing API data
-    # DexScreener provides txns.h1.buys and txns.h1.sells
     total_txns = token.buys_1h + token.sells_1h
     if total_txns > 0:
         buy_ratio = token.buys_1h / total_txns
@@ -105,6 +118,26 @@ def score(
         if last_3[0] < last_3[1] < last_3[2]:
             points += 10
             signals.append("score_velocity")
+
+    # Signal 8: Unique Buyers -- 15 points (BL-021)
+    # High unique buyer count relative to total txns = organic community buying
+    if token.unique_buyers_1h > 0 and total_txns > 0:
+        buyer_ratio = token.unique_buyers_1h / total_txns
+        if buyer_ratio > 0.50:
+            points += 15
+            signals.append("unique_buyers")
+
+    # Signal 9: Solana Chain Bonus -- 5 points (BL-030)
+    # Meme premium: Solana has disproportionate meme coin activity
+    if token.chain == "solana":
+        points += 5
+        signals.append("solana_bonus")
+
+    # Signal 10: Small Transaction Ratio -- 5 points (BL-024)
+    # Organic pre-pump = many small txns. Bot wash = fewer large uniform txns.
+    if token.small_txn_ratio > 0.60:
+        points += 5
+        signals.append("small_txn_ratio")
 
     # BL-016: Normalize raw sum to 0-100 scale
     normalized = min(100, int(points * 100 / RAW_MAX))
@@ -149,4 +182,23 @@ def _token_age_score(age_days: float) -> int:
         return 10
     elif age_days <= 5.0:
         return 5
+    return 0
+
+
+def _market_cap_tier_score(market_cap_usd: float, settings: Settings) -> int:
+    """Graduated market cap scoring (BL-031).
+
+    8 pts for $10K-$100K (peak discovery zone)
+    5 pts for $100K-$250K (growing but still early)
+    2 pts for $250K-$500K (late but possible)
+    0 pts outside range
+    """
+    if market_cap_usd < settings.MIN_MARKET_CAP:
+        return 0
+    elif market_cap_usd <= 100_000:
+        return 8
+    elif market_cap_usd <= 250_000:
+        return 5
+    elif market_cap_usd <= settings.MAX_MARKET_CAP:
+        return 2
     return 0

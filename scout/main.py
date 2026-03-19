@@ -155,6 +155,8 @@ async def main() -> None:
         pass  # SIGTERM not supported on Windows
 
     cycle_count = 0
+    cumulative = {"tokens_scanned": 0, "candidates_promoted": 0, "alerts_fired": 0}
+    heartbeat_interval = 5  # cycles between heartbeat logs
     try:
         async with aiohttp.ClientSession() as session:
             while not shutdown_event.is_set():
@@ -163,10 +165,23 @@ async def main() -> None:
                         settings, db, session, dry_run=args.dry_run
                     )
                     logger.info("Cycle complete", **stats)
+                    for k in cumulative:
+                        cumulative[k] += stats.get(k, 0)
                 except Exception as e:
                     logger.error("Cycle failed", error=str(e))
 
                 cycle_count += 1
+
+                # BL-033: Heartbeat logging every N cycles
+                if cycle_count % heartbeat_interval == 0:
+                    mirofish_today = await db.get_daily_mirofish_count()
+                    logger.info(
+                        "Heartbeat",
+                        cycles_completed=cycle_count,
+                        mirofish_jobs_today=mirofish_today,
+                        **cumulative,
+                    )
+
                 if args.cycles > 0 and cycle_count >= args.cycles:
                     break
 

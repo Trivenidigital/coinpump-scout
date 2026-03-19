@@ -33,6 +33,10 @@ class CandidateToken(BaseModel):
     social_mentions_24h: int = 0
     buys_1h: int = 0
     sells_1h: int = 0
+    unique_buyers_1h: int = 0
+    top3_wallet_concentration: float = 0.0
+    deployer_supply_pct: float = 0.0
+    small_txn_ratio: float = 0.0
 
     # Populated by pipeline stages
     quant_score: int | None = None

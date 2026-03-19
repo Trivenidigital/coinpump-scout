@@ -10,7 +10,7 @@ from scout.ingestion.dexscreener import fetch_trending
 
 def _settings(**overrides) -> Settings:
     defaults = dict(
-        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k",
+        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", LLM_API_KEY="k",
         MIN_MARKET_CAP=10000, MAX_MARKET_CAP=500000, MAX_TOKEN_AGE_DAYS=7,
     )
     defaults.update(overrides)

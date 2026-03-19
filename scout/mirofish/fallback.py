@@ -1,10 +1,10 @@
-"""Claude API fallback for narrative scoring when MiroFish is unavailable."""
+"""LLM fallback for narrative scoring when MiroFish is unavailable."""
 
 import json
 import structlog
 import re
 
-import anthropic
+from openai import AsyncOpenAI
 
 from scout.models import MiroFishResult
 
@@ -22,24 +22,29 @@ SYSTEM_PROMPT = (
 async def score_narrative_fallback(
     seed: dict,
     api_key: str,
-    client: anthropic.AsyncAnthropic | None = None,
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model_name: str = "qwen-plus",
+    client: AsyncOpenAI | None = None,
 ) -> MiroFishResult:
-    """Score a token's narrative using Claude haiku as a fallback.
+    """Score a token's narrative using an OpenAI-compatible LLM as a fallback.
 
-    Uses claude-haiku-4-5 with max_tokens=300. Returns the same MiroFishResult
-    schema as the MiroFish client for compatibility with gate.py.
+    Uses the configured LLM (default: Qwen via DashScope) with max_tokens=300.
+    Returns the same MiroFishResult schema as the MiroFish client for
+    compatibility with gate.py.
     """
     if client is None:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
-    message = await client.messages.create(
-        model="claude-haiku-4-5",
+    response = await client.chat.completions.create(
+        model=model_name,
         max_tokens=300,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": seed["prompt"]}],
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": seed["prompt"]},
+        ],
     )
 
-    text = message.content[0].text
+    text = response.choices[0].message.content
     data = _extract_json(text)
 
     return MiroFishResult(

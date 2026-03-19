@@ -14,7 +14,7 @@ from scout.models import MiroFishResult
 
 def _settings(**overrides) -> Settings:
     defaults = dict(
-        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k",
+        TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", LLM_API_KEY="k",
         MIROFISH_URL="http://localhost:5001",
         MIROFISH_TIMEOUT_SEC=5,
     )

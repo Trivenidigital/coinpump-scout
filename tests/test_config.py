@@ -11,7 +11,7 @@ def test_settings_loads_defaults():
     s = Settings(
         TELEGRAM_BOT_TOKEN="test-token",
         TELEGRAM_CHAT_ID="test-chat",
-        ANTHROPIC_API_KEY="test-key",
+        LLM_API_KEY="test-key",
     )
     assert s.SCAN_INTERVAL_SECONDS == 60
     assert s.MIN_SCORE == 60
@@ -37,7 +37,7 @@ def test_settings_chains_parsing_from_string():
     s = Settings(
         TELEGRAM_BOT_TOKEN="t",
         TELEGRAM_CHAT_ID="c",
-        ANTHROPIC_API_KEY="k",
+        LLM_API_KEY="k",
         CHAINS="solana,polygon",
     )
     assert s.CHAINS == ["solana", "polygon"]
@@ -47,7 +47,7 @@ def test_settings_chains_parsing_from_list():
     s = Settings(
         TELEGRAM_BOT_TOKEN="t",
         TELEGRAM_CHAT_ID="c",
-        ANTHROPIC_API_KEY="k",
+        LLM_API_KEY="k",
         CHAINS=["base", "ethereum"],
     )
     assert s.CHAINS == ["base", "ethereum"]
@@ -57,7 +57,7 @@ def test_settings_custom_overrides():
     s = Settings(
         TELEGRAM_BOT_TOKEN="t",
         TELEGRAM_CHAT_ID="c",
-        ANTHROPIC_API_KEY="k",
+        LLM_API_KEY="k",
         MIN_SCORE=40,
         CONVICTION_THRESHOLD=80,
         SCAN_INTERVAL_SECONDS=30,
@@ -74,7 +74,7 @@ def test_settings_weight_sum_validation():
         Settings(
             TELEGRAM_BOT_TOKEN="t",
             TELEGRAM_CHAT_ID="c",
-            ANTHROPIC_API_KEY="k",
+            LLM_API_KEY="k",
             QUANT_WEIGHT=0.7,
             NARRATIVE_WEIGHT=0.4,
         )

@@ -44,8 +44,10 @@ class Settings(BaseSettings):
     # Database
     DB_PATH: Path = Path("scout.db")
 
-    # Claude fallback
-    ANTHROPIC_API_KEY: str
+    # LLM fallback (OpenAI-compatible)
+    LLM_API_KEY: str
+    LLM_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    LLM_MODEL_NAME: str = "qwen-plus"
 
     @field_validator("CHAINS", mode="before")
     @classmethod

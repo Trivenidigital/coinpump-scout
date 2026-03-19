@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     MAX_MARKET_CAP: float = 500_000
     MAX_TOKEN_AGE_DAYS: int = 7
     MIN_VOL_LIQ_RATIO: float = 5.0
+    MIN_LIQUIDITY_USD: float = 15_000
     CHAINS: list[str] = ["solana", "base", "ethereum"]
 
     # MiroFish

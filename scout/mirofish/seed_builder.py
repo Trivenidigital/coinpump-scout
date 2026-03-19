@@ -1,17 +1,24 @@
 """Build MiroFish simulation seed payloads from CandidateToken data."""
 
 from scout.models import CandidateToken
+from scout.scorer import confidence
 
 
-def build_seed(token: CandidateToken) -> dict:
+def build_seed(token: CandidateToken, signals_fired: list[str] | None = None) -> dict:
     """Build a simulation seed document for MiroFish.
 
     Returns a structured dict with token metadata and a formatted prompt
     string matching PRD Section 8.2 seed format.
+
+    BL-015: Includes signal_confidence and signals_fired list to enrich
+    the narrative simulation with quantitative context.
     """
     age_hours = int(token.token_age_days * 24)
     social = f"{token.social_mentions_24h} mentions in 24h" if token.social_mentions_24h > 0 else "None detected"
     concept_description = f"{token.token_name} ({token.ticker}) is a {token.chain} token"
+
+    signals = signals_fired or []
+    signal_confidence = confidence(signals)
 
     prompt = (
         f"Token: {token.token_name} ({token.ticker}) on {token.chain}. "
@@ -19,6 +26,7 @@ def build_seed(token: CandidateToken) -> dict:
         f"Market cap: ${token.market_cap_usd}. "
         f"First seen: {age_hours}h ago. "
         f"Early social signals: {social}. "
+        f"Signal confidence: {signal_confidence} ({len(signals)} signals firing: {', '.join(signals) or 'none'}). "
         f"Predict: will this narrative spread organically through crypto Twitter "
         f"and Telegram communities over the next 24 hours?"
     )
@@ -31,5 +39,7 @@ def build_seed(token: CandidateToken) -> dict:
         "age_hours": age_hours,
         "concept_description": concept_description,
         "social_snippets": social,
+        "signal_confidence": signal_confidence,
+        "signals_fired": signals,
         "prompt": prompt,
     }

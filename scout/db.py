@@ -20,6 +20,8 @@ _CANDIDATE_COLUMNS = [
     "holder_count",
     "holder_growth_1h",
     "social_mentions_24h",
+    "buys_1h",
+    "sells_1h",
     "quant_score",
     "narrative_score",
     "conviction_score",
@@ -74,6 +76,8 @@ class Database:
                 holder_count     INTEGER DEFAULT 0,
                 holder_growth_1h INTEGER DEFAULT 0,
                 social_mentions_24h INTEGER DEFAULT 0,
+                buys_1h          INTEGER DEFAULT 0,
+                sells_1h         INTEGER DEFAULT 0,
                 quant_score      INTEGER,
                 narrative_score  INTEGER,
                 conviction_score REAL,
@@ -95,6 +99,13 @@ class Database:
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
                 created_at        TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS score_history (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_address  TEXT NOT NULL,
+                score             INTEGER NOT NULL,
+                scanned_at        TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS outcomes (
@@ -196,6 +207,32 @@ class Database:
             (contract_address, now),
         )
         await self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Score history (BL-013)
+    # ------------------------------------------------------------------
+
+    async def log_score(self, contract_address: str, score: int) -> None:
+        """Log a quant score for velocity tracking."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
+            (contract_address, score, now),
+        )
+        await self._conn.commit()
+
+    async def get_recent_scores(self, contract_address: str, limit: int = 3) -> list[int]:
+        """Get the most recent scores for a token, oldest first."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cursor = await self._conn.execute(
+            "SELECT score FROM score_history WHERE contract_address = ? ORDER BY scanned_at DESC LIMIT ?",
+            (contract_address, limit),
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in reversed(rows)]
 
     async def get_daily_mirofish_count(self) -> int:
         """Count MiroFish jobs run today (UTC)."""

@@ -61,7 +61,9 @@ async def run_cycle(
     # Stage 3: Score
     scored = []
     for token in enriched:
-        points, signals = score(token, settings)
+        previous_scores = await db.get_recent_scores(token.contract_address)
+        points, signals = score(token, settings, previous_scores=previous_scores)
+        await db.log_score(token.contract_address, points)
         updated = token.model_copy(update={"quant_score": points})
         await db.upsert_candidate(updated)
         if points >= settings.MIN_SCORE:
@@ -71,7 +73,7 @@ async def run_cycle(
     # Stages 4-5: Gate (MiroFish + conviction)
     for token, signals in scored:
         should_alert, conviction, gated_token = await evaluate(
-            token, db, session, settings
+            token, db, session, settings, signals_fired=signals,
         )
 
         if not should_alert:

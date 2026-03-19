@@ -31,6 +31,8 @@ class CandidateToken(BaseModel):
     holder_count: int = 0
     holder_growth_1h: int = 0
     social_mentions_24h: int = 0
+    buys_1h: int = 0
+    sells_1h: int = 0
 
     # Populated by pipeline stages
     quant_score: int | None = None
@@ -54,6 +56,10 @@ class CandidateToken(BaseModel):
             age_delta = datetime.now(timezone.utc) - created_at
             token_age_days = age_delta.total_seconds() / 86400
 
+        txns = data.get("txns", {}).get("h1", {})
+        buys_1h = int(txns.get("buys") or 0)
+        sells_1h = int(txns.get("sells") or 0)
+
         return cls(
             contract_address=base_token.get("address", ""),
             chain=data.get("chainId", ""),
@@ -65,6 +71,8 @@ class CandidateToken(BaseModel):
             volume_24h_usd=float((data.get("volume") or {}).get("h24") or 0),
             holder_count=0,
             holder_growth_1h=0,
+            buys_1h=buys_1h,
+            sells_1h=sells_1h,
         )
 
     @classmethod

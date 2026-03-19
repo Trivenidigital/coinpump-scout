@@ -20,6 +20,7 @@ async def evaluate(
     db: Database,
     session: aiohttp.ClientSession,
     settings: Settings,
+    signals_fired: list[str] | None = None,
 ) -> tuple[bool, float, CandidateToken]:
     """Evaluate a candidate token through the conviction gate.
 
@@ -33,7 +34,9 @@ async def evaluate(
     if quant_score >= settings.MIN_SCORE:
         daily_count = await db.get_daily_mirofish_count()
         if daily_count < settings.MAX_MIROFISH_JOBS_PER_DAY:
-            narrative_score = await _get_narrative_score(token, session, db, settings)
+            narrative_score = await _get_narrative_score(
+                token, session, db, settings, signals_fired=signals_fired,
+            )
 
     # Compute conviction score
     if narrative_score is not None:
@@ -57,9 +60,10 @@ async def _get_narrative_score(
     session: aiohttp.ClientSession,
     db: Database,
     settings: Settings,
+    signals_fired: list[str] | None = None,
 ) -> int | None:
-    """Run MiroFish simulation with Claude fallback."""
-    seed = build_seed(token)
+    """Run MiroFish simulation with LLM fallback."""
+    seed = build_seed(token, signals_fired=signals_fired)
 
     try:
         result = await simulate(seed, session, settings)

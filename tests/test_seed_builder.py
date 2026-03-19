@@ -31,6 +31,9 @@ def test_build_seed_returns_required_keys():
     assert "concept_description" in seed
     assert "social_snippets" in seed
     assert "prompt" in seed
+    # BL-015: new fields
+    assert "signal_confidence" in seed
+    assert "signals_fired" in seed
 
 
 def test_build_seed_values():
@@ -65,3 +68,24 @@ def test_build_seed_no_social_mentions():
     token = _make_token(social_mentions_24h=0)
     seed = build_seed(token)
     assert seed["social_snippets"] == "None detected"
+
+
+def test_build_seed_with_signals():
+    """BL-015: Seed includes signal confidence when signals are provided."""
+    token = _make_token()
+    signals = ["vol_liq_ratio", "holder_growth", "market_cap_range"]
+    seed = build_seed(token, signals_fired=signals)
+
+    assert seed["signal_confidence"] == "HIGH"
+    assert seed["signals_fired"] == signals
+    assert "Signal confidence: HIGH" in seed["prompt"]
+    assert "3 signals firing" in seed["prompt"]
+
+
+def test_build_seed_without_signals():
+    """BL-015: Seed defaults to LOW confidence with no signals."""
+    token = _make_token()
+    seed = build_seed(token)
+
+    assert seed["signal_confidence"] == "LOW"
+    assert seed["signals_fired"] == []

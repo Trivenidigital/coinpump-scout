@@ -108,6 +108,13 @@ class Database:
                 scanned_at        TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS holder_snapshots (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_address  TEXT NOT NULL,
+                holder_count      INTEGER NOT NULL,
+                recorded_at       TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS outcomes (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
@@ -233,6 +240,35 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [row[0] for row in reversed(rows)]
+
+    # ------------------------------------------------------------------
+    # Holder snapshots (BL-020)
+    # ------------------------------------------------------------------
+
+    async def log_holder_snapshot(self, contract_address: str, holder_count: int) -> None:
+        """Record a holder count snapshot for growth tracking."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "INSERT INTO holder_snapshots (contract_address, holder_count, recorded_at) VALUES (?, ?, ?)",
+            (contract_address, holder_count, now),
+        )
+        await self._conn.commit()
+
+    async def get_previous_holder_count(self, contract_address: str) -> int | None:
+        """Get the most recent holder count snapshot for a token.
+
+        Returns None if no previous snapshot exists (first scan).
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cursor = await self._conn.execute(
+            "SELECT holder_count FROM holder_snapshots WHERE contract_address = ? ORDER BY recorded_at DESC LIMIT 1",
+            (contract_address,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
 
     async def get_daily_mirofish_count(self) -> int:
         """Count MiroFish jobs run today (UTC)."""

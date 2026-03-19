@@ -12,6 +12,9 @@ def test_settings_loads_defaults():
         TELEGRAM_BOT_TOKEN="test-token",
         TELEGRAM_CHAT_ID="test-chat",
         LLM_API_KEY="test-key",
+        HELIUS_API_KEY="",
+        MORALIS_API_KEY="",
+        DISCORD_WEBHOOK_URL="",
     )
     assert s.SCAN_INTERVAL_SECONDS == 60
     assert s.MIN_SCORE == 60
@@ -22,6 +25,7 @@ def test_settings_loads_defaults():
     assert s.MAX_MARKET_CAP == 500_000
     assert s.MAX_TOKEN_AGE_DAYS == 7
     assert s.MIN_VOL_LIQ_RATIO == 5.0
+    assert s.MIN_LIQUIDITY_USD == 15_000
     assert s.CHAINS == ["solana", "base", "ethereum"]
     assert s.MIROFISH_URL == "http://localhost:5001"
     assert s.MIROFISH_TIMEOUT_SEC == 180

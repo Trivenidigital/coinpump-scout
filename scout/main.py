@@ -58,6 +58,15 @@ async def run_cycle(
         *[enrich_holders(token, session, settings) for token in all_candidates]
     ))
 
+    # BL-020: Compute holder_growth_1h from previous snapshots
+    for i, token in enumerate(enriched):
+        if token.holder_count > 0:
+            prev = await db.get_previous_holder_count(token.contract_address)
+            await db.log_holder_snapshot(token.contract_address, token.holder_count)
+            if prev is not None:
+                growth = token.holder_count - prev
+                enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
+
     # Stage 3: Score
     scored = []
     for token in enriched:

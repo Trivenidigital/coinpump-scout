@@ -1,10 +1,11 @@
 """GoPlus Security API token safety check."""
 
-import logging
+import asyncio
 
 import aiohttp
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # GoPlus uses chain IDs: 1 = ethereum, 56 = bsc, etc.
 # For named chains, they also accept the name directly.
@@ -35,11 +36,11 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
     try:
         async with session.get(url, params={"contract_addresses": contract_address}) as resp:
             if resp.status != 200:
-                logger.warning("GoPlus API returned %d for %s", resp.status, contract_address)
+                logger.warning("GoPlus API returned error", status=resp.status, contract_address=contract_address)
                 return True
             data = await resp.json()
-    except (aiohttp.ClientError, Exception) as e:
-        logger.warning("GoPlus API error for %s: %s", contract_address, e)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        logger.warning("GoPlus API error", contract_address=contract_address, error=str(e))
         return True
 
     result = data.get("result", {}).get(contract_address.lower(), {})
@@ -47,7 +48,7 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
         # Also check without lowercasing for Solana addresses
         result = data.get("result", {}).get(contract_address, {})
     if not result:
-        logger.warning("GoPlus: no result for %s", contract_address)
+        logger.warning("GoPlus: no result", contract_address=contract_address)
         return True
 
     if result.get("is_honeypot") == "1":

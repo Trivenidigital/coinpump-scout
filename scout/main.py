@@ -53,11 +53,10 @@ async def run_cycle(
     all_candidates = aggregate(list(dex_tokens) + list(gecko_tokens))
     stats["tokens_scanned"] = len(all_candidates)
 
-    # Enrich holders
-    enriched = []
-    for token in all_candidates:
-        enriched_token = await enrich_holders(token, session, settings)
-        enriched.append(enriched_token)
+    # Enrich holders (concurrently)
+    enriched = list(await asyncio.gather(
+        *[enrich_holders(token, session, settings) for token in all_candidates]
+    ))
 
     # Stage 3: Score
     scored = []
@@ -137,8 +136,12 @@ async def main() -> None:
         logger.info("Shutdown signal received", signal=sig)
         shutdown_event.set()
 
+    # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    try:
+        signal.signal(signal.SIGTERM, _shutdown)
+    except (OSError, ValueError):
+        pass  # SIGTERM not supported on Windows
 
     cycle_count = 0
     try:

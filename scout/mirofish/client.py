@@ -1,7 +1,7 @@
 """Async HTTP client for MiroFish REST API."""
 
 import asyncio
-import logging
+import structlog
 
 import aiohttp
 
@@ -9,7 +9,7 @@ from scout.config import Settings
 from scout.exceptions import MiroFishConnectionError, MiroFishTimeoutError
 from scout.models import MiroFishResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 async def simulate(

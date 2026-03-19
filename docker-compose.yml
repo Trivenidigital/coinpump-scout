@@ -30,6 +30,7 @@ services:
       - .env
     environment:
       - MIROFISH_URL=http://mirofish:5001
+      - DB_PATH=/app/data/scout.db
     volumes:
       - scout-data:/app/data
     networks:

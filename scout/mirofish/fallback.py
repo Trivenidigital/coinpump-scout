@@ -1,14 +1,14 @@
 """Claude API fallback for narrative scoring when MiroFish is unavailable."""
 
 import json
-import logging
+import structlog
 import re
 
 import anthropic
 
 from scout.models import MiroFishResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 SYSTEM_PROMPT = (
     "You are a crypto narrative analyst. Score the viral potential of a token's "
@@ -19,13 +19,18 @@ SYSTEM_PROMPT = (
 )
 
 
-async def score_narrative_fallback(seed: dict, api_key: str) -> MiroFishResult:
+async def score_narrative_fallback(
+    seed: dict,
+    api_key: str,
+    client: anthropic.AsyncAnthropic | None = None,
+) -> MiroFishResult:
     """Score a token's narrative using Claude haiku as a fallback.
 
     Uses claude-haiku-4-5 with max_tokens=300. Returns the same MiroFishResult
     schema as the MiroFish client for compatibility with gate.py.
     """
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    if client is None:
+        client = anthropic.AsyncAnthropic(api_key=api_key)
 
     message = await client.messages.create(
         model="claude-haiku-4-5",

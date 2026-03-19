@@ -99,7 +99,7 @@ class CandidateToken(BaseModel):
             contract_address=contract_address,
             chain=chain,
             token_name=token_name,
-            ticker="",  # GeckoTerminal pool data doesn't include ticker separately
+            ticker=token_name,  # GeckoTerminal doesn't provide ticker separately; use name as fallback
             market_cap_usd=float(attrs.get("fdv_usd") or 0),
             liquidity_usd=float(attrs.get("reserve_in_usd") or 0),
             volume_24h_usd=(

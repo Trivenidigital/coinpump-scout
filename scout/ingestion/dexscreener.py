@@ -1,21 +1,22 @@
 """DexScreener API poller for trending tokens."""
 
 import asyncio
-import logging
 from collections import defaultdict
 
 import aiohttp
+import structlog
 
 from scout.config import Settings
 from scout.exceptions import IngestionError
 from scout.models import CandidateToken
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 BOOST_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
 TOKEN_URL = "https://api.dexscreener.com/tokens/v1"
 
 MAX_RETRIES = 3
+MAX_CONCURRENT = 5
 
 
 async def _get_json(
@@ -31,23 +32,24 @@ async def _get_json(
                 if resp.status == 429 or resp.status >= 500:
                     wait = 2 ** attempt
                     logger.warning(
-                        "DexScreener %s returned %s, retrying in %ss (attempt %d/%d)",
-                        url, resp.status, wait, attempt + 1, retries,
+                        "DexScreener returned error, retrying",
+                        url=url, status=resp.status, wait=wait,
+                        attempt=attempt + 1, retries=retries,
                     )
                     await asyncio.sleep(wait)
                     continue
                 if resp.status != 200:
-                    logger.warning("DexScreener %s returned %s", url, resp.status)
+                    logger.warning("DexScreener returned error", url=url, status=resp.status)
                     return None
                 return await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             wait = 2 ** attempt
             logger.warning(
-                "DexScreener request to %s failed: %s, retrying in %ss",
-                url, exc, wait,
+                "DexScreener request failed, retrying",
+                url=url, error=str(exc), wait=wait,
             )
             await asyncio.sleep(wait)
-    logger.warning("DexScreener %s failed after %d retries", url, retries)
+    logger.warning("DexScreener failed after retries", url=url, retries=retries)
     return None
 
 
@@ -74,15 +76,16 @@ async def fetch_trending(
         if chain and address and address not in chain_tokens[chain]:
             chain_tokens[chain].append(address)
 
-    candidates: list[CandidateToken] = []
+    sem = asyncio.Semaphore(MAX_CONCURRENT)
 
-    for chain, addresses in chain_tokens.items():
-        for address in addresses:
+    async def _fetch_one(chain: str, address: str) -> list[CandidateToken]:
+        async with sem:
             url = f"{TOKEN_URL}/{chain}/{address}"
             pairs = await _get_json(session, url)
             if not pairs or not isinstance(pairs, list):
-                continue
+                return []
 
+            results: list[CandidateToken] = []
             for pair_data in pairs:
                 fdv = float(pair_data.get("fdv") or 0)
                 if not (settings.MIN_MARKET_CAP <= fdv <= settings.MAX_MARKET_CAP):
@@ -94,7 +97,22 @@ async def fetch_trending(
                     logger.exception("Failed to parse DexScreener pair data")
                     continue
 
-                candidates.append(token)
+                results.append(token)
+            return results
 
-    logger.info("DexScreener: found %d candidates from %d boosts", len(candidates), len(boosts))
+    tasks = [
+        _fetch_one(chain, addr)
+        for chain, addrs in chain_tokens.items()
+        for addr in addrs
+    ]
+    gather_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    candidates: list[CandidateToken] = []
+    for result in gather_results:
+        if isinstance(result, Exception):
+            logger.warning("Token fetch failed", error=str(result))
+            continue
+        candidates.extend(result)
+
+    logger.info("DexScreener: found candidates", candidate_count=len(candidates), boost_count=len(boosts))
     return candidates

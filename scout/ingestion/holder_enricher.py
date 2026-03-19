@@ -1,13 +1,13 @@
 """Holder data enrichment via Helius (Solana) and Moralis (EVM)."""
 
-import logging
+import structlog
 
 import aiohttp
 
 from scout.config import Settings
 from scout.models import CandidateToken
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Chain mappings for Moralis
 MORALIS_CHAIN_MAP = {
@@ -61,7 +61,8 @@ async def _enrich_solana(
             return token.model_copy(update={"holder_count": total})
     except Exception:
         logger.warning(
-            "Helius holder lookup failed for %s", token.contract_address, exc_info=True
+            "Helius holder lookup failed",
+            contract_address=token.contract_address, exc_info=True,
         )
         return token
 
@@ -86,6 +87,7 @@ async def _enrich_evm(
             return token.model_copy(update={"holder_count": len(holders)})
     except Exception:
         logger.warning(
-            "Moralis holder lookup failed for %s", token.contract_address, exc_info=True
+            "Moralis holder lookup failed",
+            contract_address=token.contract_address, exc_info=True,
         )
         return token

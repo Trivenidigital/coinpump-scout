@@ -1,6 +1,6 @@
 """Alert delivery to Telegram and Discord."""
 
-import logging
+import structlog
 
 import aiohttp
 
@@ -8,7 +8,7 @@ from scout.config import Settings
 from scout.exceptions import AlertDeliveryError
 from scout.models import CandidateToken
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def format_alert_message(token: CandidateToken, signals: list[str]) -> str:
@@ -22,10 +22,14 @@ def format_alert_message(token: CandidateToken, signals: list[str]) -> str:
     lines.append("")
 
     # Conviction breakdown
-    lines.append(f"Conviction Score: {token.conviction_score}")
-    lines.append(f"  Quant: {token.quant_score}")
+    conviction_display = f"{token.conviction_score:.1f}" if token.conviction_score is not None else "N/A"
+    quant_display = str(token.quant_score) if token.quant_score is not None else "N/A"
+    narrative_display = str(token.narrative_score) if token.narrative_score is not None else "N/A"
+
+    lines.append(f"Conviction Score: {conviction_display}")
+    lines.append(f"  Quant: {quant_display}")
     if token.narrative_score is not None:
-        lines.append(f"  Narrative: {token.narrative_score}")
+        lines.append(f"  Narrative: {narrative_display}")
 
     # Signals
     lines.append("")
@@ -92,7 +96,7 @@ async def send_alert(
             ) as resp:
                 if resp.status not in (200, 204):
                     logger.warning(
-                        "Discord webhook returned %s", resp.status
+                        "Discord webhook returned error", status=resp.status
                     )
         except Exception:
             logger.warning("Discord webhook delivery failed", exc_info=True)

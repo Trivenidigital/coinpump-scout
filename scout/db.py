@@ -58,7 +58,8 @@ class Database:
     # ------------------------------------------------------------------
 
     async def _create_tables(self) -> None:
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         await self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS candidates (
@@ -113,7 +114,8 @@ class Database:
 
     async def upsert_candidate(self, token: CandidateToken) -> None:
         """INSERT OR REPLACE candidate by contract_address."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         placeholders = ", ".join("?" for _ in _CANDIDATE_COLUMNS)
         cols = ", ".join(_CANDIDATE_COLUMNS)
         values = []
@@ -131,7 +133,8 @@ class Database:
 
     async def get_candidates_above_score(self, min_score: int) -> list[dict]:
         """Get candidates with quant_score >= min_score."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         cursor = await self._conn.execute(
             "SELECT * FROM candidates WHERE quant_score IS NOT NULL AND quant_score >= ?",
             (min_score,),
@@ -147,7 +150,8 @@ class Database:
         self, contract_address: str, chain: str, conviction_score: float
     ) -> None:
         """Log a fired alert."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
         await self._conn.execute(
             "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at) VALUES (?, ?, ?, ?)",
@@ -157,7 +161,8 @@ class Database:
 
     async def get_daily_alert_count(self) -> int:
         """Count alerts fired today (UTC)."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         cursor = await self._conn.execute(
             "SELECT COUNT(*) FROM alerts WHERE date(alerted_at) = ?",
@@ -168,7 +173,8 @@ class Database:
 
     async def get_recent_alerts(self, days: int = 30) -> list[dict]:
         """Get alerts from the last N days."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         cursor = await self._conn.execute(
             "SELECT * FROM alerts WHERE date(alerted_at) >= date('now', ?)",
             (f"-{days} days",),
@@ -182,7 +188,8 @@ class Database:
 
     async def log_mirofish_job(self, contract_address: str) -> None:
         """Log a MiroFish simulation job."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
         await self._conn.execute(
             "INSERT INTO mirofish_jobs (contract_address, created_at) VALUES (?, ?)",
@@ -192,7 +199,8 @@ class Database:
 
     async def get_daily_mirofish_count(self) -> int:
         """Count MiroFish jobs run today (UTC)."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         cursor = await self._conn.execute(
             "SELECT COUNT(*) FROM mirofish_jobs WHERE date(created_at) = ?",

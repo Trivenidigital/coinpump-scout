@@ -1,6 +1,6 @@
 """Conviction gate: combines quant and narrative scores to decide alerts."""
 
-import logging
+import structlog
 
 import aiohttp
 
@@ -12,7 +12,7 @@ from scout.mirofish.fallback import score_narrative_fallback
 from scout.mirofish.seed_builder import build_seed
 from scout.models import CandidateToken
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 async def evaluate(
@@ -60,16 +60,17 @@ async def _get_narrative_score(
 ) -> int | None:
     """Run MiroFish simulation with Claude fallback."""
     seed = build_seed(token)
-    await db.log_mirofish_job(token.contract_address)
 
     try:
         result = await simulate(seed, session, settings)
+        await db.log_mirofish_job(token.contract_address)
         return result.narrative_score
     except (MiroFishTimeoutError, MiroFishConnectionError) as e:
-        logger.warning("MiroFish failed for %s, falling back to Claude: %s", token.contract_address, e)
+        logger.warning("MiroFish failed, falling back to Claude", contract_address=token.contract_address, error=str(e))
         try:
             result = await score_narrative_fallback(seed, settings.ANTHROPIC_API_KEY)
+            await db.log_mirofish_job(token.contract_address)
             return result.narrative_score
         except Exception as e:
-            logger.error("Claude fallback also failed for %s: %s", token.contract_address, e)
+            logger.error("Claude fallback also failed", contract_address=token.contract_address, error=str(e))
             return None

@@ -15,80 +15,16 @@ import structlog
 
 from scout.config import Settings
 from scout.db import Database
+from scout.ingestion._helius import HELIUS_API, HELIUS_RPC, helius_request, helius_rpc_url
 from scout.ingestion.cex_monitor import check_cex_listing
 from scout.models import CandidateToken
 
 logger = structlog.get_logger()
 
-HELIUS_API = "https://api.helius.xyz/v0"
-HELIUS_RPC = "https://mainnet.helius-rpc.com"
 DEXSCREENER_PAIR_URL = "https://api.dexscreener.com/tokens/v1"
 
 # Known smart-money / alpha wallets (curated set — extend as needed)
 SMART_MONEY_WALLETS: set[str] = set()
-
-# Whale buy threshold in USD-equivalent token amount
-_WHALE_USD_THRESHOLD = 1_000.0
-
-# Rate-limit guard: reuse the same pattern as holder_enricher
-_helius_semaphore = asyncio.Semaphore(1)
-_HELIUS_DELAY = 0.5
-_MAX_RETRIES = 4
-_RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
-
-# Dead/burn addresses used to detect permanently locked liquidity
-_BURN_ADDRESSES = {
-    "1nc1nerator11111111111111111111111111111111",
-    "11111111111111111111111111111111",
-    "1111111111111111111111111111111111111111111",
-}
-
-
-# ------------------------------------------------------------------
-# Helius request helper (mirrors holder_enricher._helius_request)
-# ------------------------------------------------------------------
-
-async def _helius_request(
-    session: aiohttp.ClientSession,
-    method: str,
-    url: str,
-    **kwargs,
-) -> dict | list | None:
-    """Make a Helius request with rate-limit semaphore and retry on 429."""
-    async with _helius_semaphore:
-        await asyncio.sleep(_HELIUS_DELAY)
-        for attempt in range(_MAX_RETRIES):
-            try:
-                if method == "post":
-                    async with session.post(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited (onchain_signals)", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        if isinstance(data, dict) and "error" in data:
-                            logger.warning("Helius RPC error (onchain_signals)", error=data["error"])
-                            return None
-                        return data
-                else:
-                    async with session.get(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited (onchain_signals)", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        if resp.status != 200:
-                            return None
-                        return await resp.json()
-            except aiohttp.ClientError:
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_BACKOFF[attempt])
-                    continue
-                raise
-    logger.warning("Helius request failed after retries (onchain_signals)", url=url)
-    return None
 
 
 # ------------------------------------------------------------------
@@ -111,7 +47,7 @@ async def check_smart_money(
     Returns:
         {"smart_money_buys": int, "whale_buys": int, "unique_buyers_recent": int}
     """
-    defaults = {"smart_money_buys": 0, "whale_buys": 0, "unique_buyers_recent": 0}
+    defaults = {"smart_money_buys": 0, "whale_buys": 0, "unique_buyers_recent": 0, "whale_txns_1h": 0}
 
     if not settings.HELIUS_API_KEY:
         return defaults
@@ -120,7 +56,7 @@ async def check_smart_money(
     params = {"api-key": settings.HELIUS_API_KEY, "limit": 50, "type": "SWAP"}
 
     try:
-        txns = await _helius_request(session, "get", url, params=params)
+        txns = await helius_request(session, "get", url, params=params)
         if not txns or not isinstance(txns, list):
             return defaults
     except Exception:
@@ -130,6 +66,7 @@ async def check_smart_money(
     buyer_wallets: set[str] = set()
     smart_money_count = 0
     whale_count = 0
+    whale_txn_count = 0
 
     for txn in txns:
         fee_payer = txn.get("feePayer", "")
@@ -165,14 +102,19 @@ async def check_smart_money(
                 sol_spent += abs(float(nt.get("amount", 0))) / 1e9
 
         # Use a conservative SOL price floor for whale classification
-        estimated_usd = sol_spent * 150  # conservative SOL/USD estimate
-        if estimated_usd >= _WHALE_USD_THRESHOLD:
+        estimated_usd = sol_spent * settings.SOL_PRICE_ESTIMATE_USD
+        if estimated_usd >= settings.WHALE_USD_THRESHOLD:
             whale_count += 1
+
+        # Also count whale-sized SOL transactions (>1 SOL) for whale_txns signal
+        if sol_spent > 1.0:
+            whale_txn_count += 1
 
     return {
         "smart_money_buys": smart_money_count,
         "whale_buys": whale_count,
         "unique_buyers_recent": len(buyer_wallets),
+        "whale_txns_1h": whale_txn_count,
     }
 
 
@@ -182,6 +124,7 @@ async def check_smart_money(
 
 async def check_liquidity_lock(
     mint: str,
+    chain: str,
     session: aiohttp.ClientSession,
     settings: Settings,
 ) -> dict:
@@ -190,13 +133,19 @@ async def check_liquidity_lock(
     Uses the DexScreener tokens endpoint to inspect pair data for lock info
     and burned LP tokens.
 
+    Args:
+        mint: The token's contract address.
+        chain: The chain identifier (e.g. "solana", "ethereum", "base").
+        session: Shared aiohttp session.
+        settings: Application settings.
+
     Returns:
         {"liquidity_locked": bool, "lock_source": str | None}
     """
     defaults: dict = {"liquidity_locked": False, "lock_source": None}
 
     # Query DexScreener for pair data (works for any chain)
-    url = f"{DEXSCREENER_PAIR_URL}/solana/{mint}"
+    url = f"{DEXSCREENER_PAIR_URL}/{chain}/{mint}"
     try:
         async with session.get(url) as resp:
             if resp.status != 200:
@@ -298,7 +247,7 @@ async def check_holder_distribution(
     if not settings.HELIUS_API_KEY:
         return defaults
 
-    url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
+    url = helius_rpc_url(settings.HELIUS_API_KEY)
     payload = {
         "jsonrpc": "2.0",
         "id": "holder-distribution",
@@ -307,7 +256,7 @@ async def check_holder_distribution(
     }
 
     try:
-        data = await _helius_request(session, "post", url, json=payload)
+        data = await helius_request(session, "post", url, json=payload)
         if data is None:
             return defaults
 
@@ -348,9 +297,11 @@ async def check_whale_activity(
 ) -> dict:
     """Count recent large transactions (> 1 SOL equivalent) for *mint*.
 
-    Re-uses the same Helius parsed-transactions endpoint as
-    ``check_smart_money``, scanning the last 50 SWAP transactions and
-    counting those where the SOL value transferred exceeds 1 SOL.
+    .. deprecated::
+        ``whale_txns_1h`` is now computed inside ``check_smart_money`` to
+        avoid a redundant Helius API call. This function is retained for
+        backward-compatibility but is no longer called from
+        ``enrich_onchain_signals``.
 
     Returns:
         {"whale_txns_1h": int}
@@ -364,7 +315,7 @@ async def check_whale_activity(
     params = {"api-key": settings.HELIUS_API_KEY, "limit": 50, "type": "SWAP"}
 
     try:
-        txns = await _helius_request(session, "get", url, params=params)
+        txns = await helius_request(session, "get", url, params=params)
         if not txns or not isinstance(txns, list):
             return defaults
     except Exception:
@@ -393,9 +344,6 @@ async def check_whale_activity(
 # ------------------------------------------------------------------
 
 _JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote"
-
-# USDC mint on Solana (used as output mint for Jupiter quote)
-_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 
 async def check_multi_dex(
@@ -426,7 +374,7 @@ async def check_multi_dex(
         # Request a quote for a minimal amount (1 token unit in smallest denomination)
         params = {
             "inputMint": mint,
-            "outputMint": _USDC_MINT,
+            "outputMint": settings.USDC_MINT_SOLANA,
             "amount": "1000000",  # 1 token (assuming 6 decimals; Jupiter handles this)
             "slippageBps": "500",  # 5% slippage for illiquid tokens
         }
@@ -500,7 +448,7 @@ async def enrich_onchain_signals(
         updates["whale_buys"] = sm_data["whale_buys"]
 
     # 2. Liquidity lock check
-    lock_data = await check_liquidity_lock(token.contract_address, session, settings)
+    lock_data = await check_liquidity_lock(token.contract_address, token.chain, session, settings)
     updates["liquidity_locked"] = lock_data["liquidity_locked"]
 
     # 3. Volume spike detection
@@ -515,10 +463,9 @@ async def enrich_onchain_signals(
         dist_data = await check_holder_distribution(token.contract_address, session, settings)
         updates["holder_gini_healthy"] = dist_data["holder_gini_healthy"]
 
-    # 5. Whale alert — large transactions (Solana only, requires Helius)
+    # 5. Whale alert — whale_txns_1h already computed by check_smart_money above
     if token.chain == "solana" and settings.HELIUS_API_KEY:
-        whale_data = await check_whale_activity(token.contract_address, session, settings)
-        updates["whale_txns_1h"] = whale_data["whale_txns_1h"]
+        updates["whale_txns_1h"] = sm_data.get("whale_txns_1h", 0)
 
     # 6. Multi-DEX listing check (Solana only — Jupiter is Solana-only)
     if token.chain == "solana":
@@ -529,7 +476,11 @@ async def enrich_onchain_signals(
         updates["dex_count"] = multi_dex_data["dex_count"]
 
     # 7. CEX listing check via CoinGecko (all chains)
-    cex_data = await check_cex_listing(token.ticker, session)
+    cex_data = await check_cex_listing(
+        token.ticker, session,
+        contract_address=token.contract_address,
+        chain=token.chain,
+    )
     updates["on_coingecko"] = cex_data["on_coingecko"]
 
     if updates:

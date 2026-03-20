@@ -81,6 +81,11 @@ class Database:
             await self._conn.close()
             self._conn = None
 
+    async def commit(self) -> None:
+        """Explicitly commit pending writes (use for batching high-frequency writes)."""
+        if self._conn:
+            await self._conn.commit()
+
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
@@ -210,6 +215,11 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_volume_history_contract
                 ON volume_history (contract_address);
 
+            CREATE INDEX IF NOT EXISTS idx_score_history_contract
+                ON score_history (contract_address, scanned_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_holder_snapshots_contract
+                ON holder_snapshots (contract_address, recorded_at DESC);
+
             CREATE TABLE IF NOT EXISTS outcomes (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
@@ -226,22 +236,29 @@ class Database:
     # ------------------------------------------------------------------
 
     async def upsert_candidate(self, token: CandidateToken) -> None:
-        """INSERT OR REPLACE candidate by contract_address."""
+        """Upsert candidate by contract_address, preserving first_seen_at."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
+
+        update_cols = [c for c in _CANDIDATE_COLUMNS if c != "first_seen_at"]
         placeholders = ", ".join("?" for _ in _CANDIDATE_COLUMNS)
         cols = ", ".join(_CANDIDATE_COLUMNS)
+        update_set = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+
         values = []
         for col in _CANDIDATE_COLUMNS:
             v = getattr(token, col)
-            # Serialize datetimes to ISO strings
             if isinstance(v, datetime):
                 v = v.isoformat()
             values.append(v)
+
         await self._conn.execute(
-            f"INSERT OR REPLACE INTO candidates ({cols}) VALUES ({placeholders})",
+            f"""INSERT INTO candidates ({cols}) VALUES ({placeholders})
+                ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
             values,
         )
+        # Commit immediately: candidates table is the primary persistence record.
+        # Analytics writes (log_score, log_holder_snapshot, etc.) remain batched.
         await self._conn.commit()
 
     async def get_candidates_above_score(self, min_score: int) -> list[dict]:
@@ -299,14 +316,25 @@ class Database:
     # MiroFish jobs
     # ------------------------------------------------------------------
 
-    async def log_mirofish_job(self, contract_address: str) -> None:
-        """Log a MiroFish simulation job."""
+    async def log_mirofish_job(self, contract_address: str) -> int:
+        """Log a MiroFish simulation job. Returns the row ID for rollback."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
+        cursor = await self._conn.execute(
             "INSERT INTO mirofish_jobs (contract_address, created_at) VALUES (?, ?)",
             (contract_address, now),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def rollback_mirofish_job(self, job_id: int) -> None:
+        """Remove a MiroFish job by exact row ID (rollback on failure)."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized.")
+        await self._conn.execute(
+            "DELETE FROM mirofish_jobs WHERE id = ?",
+            (job_id,),
         )
         await self._conn.commit()
 
@@ -323,7 +351,7 @@ class Database:
             "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
             (contract_address, score, now),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_recent_scores(self, contract_address: str, limit: int = 3) -> list[int]:
         """Get the most recent scores for a token, oldest first."""
@@ -349,7 +377,7 @@ class Database:
             "INSERT INTO holder_snapshots (contract_address, holder_count, recorded_at) VALUES (?, ?, ?)",
             (contract_address, holder_count, now),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_previous_holder_count(self, contract_address: str) -> int | None:
         """Get the most recent holder count snapshot for a token.
@@ -378,7 +406,7 @@ class Database:
             "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
             (contract_address, volume_24h, now),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_avg_volume(self, contract_address: str, lookback: int = 3) -> float | None:
         """Get the average 24h volume from the last *lookback* recordings.
@@ -442,7 +470,7 @@ class Database:
                 now,
             ),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_signal_snapshots(
         self,
@@ -476,3 +504,27 @@ class Database:
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def prune_old_data(self, retention_days: int = 30) -> None:
+        """Delete time-series data older than retention_days.
+
+        Uses Python's datetime.isoformat() for the cutoff so the format matches
+        how timestamps are stored (ISO 8601 with 'T' separator and UTC offset).
+        ISO 8601 strings are lexicographically ordered, so string comparison is
+        correct and avoids the SQLite datetime() space-vs-T format mismatch.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not initialized.")
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        for table, col in [
+            ("score_history", "scanned_at"),
+            ("holder_snapshots", "recorded_at"),
+            ("volume_history", "recorded_at"),
+            ("signal_snapshots", "scanned_at"),
+        ]:
+            await self._conn.execute(
+                f"DELETE FROM {table} WHERE {col} < ?",
+                (cutoff,),
+            )
+        await self._conn.commit()

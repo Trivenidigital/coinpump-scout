@@ -6,6 +6,7 @@ import re
 
 import anthropic
 
+from scout.exceptions import ScorerError
 from scout.models import MiroFishResult
 
 logger = structlog.get_logger()
@@ -22,32 +23,47 @@ SYSTEM_PROMPT = (
 async def score_narrative_fallback(
     seed: dict,
     api_key: str,
-    model_name: str = "claude-haiku-4-5-20251001",
+    model_name: str = "claude-haiku-4-5",  # CR-019: use canonical model ID
     client: anthropic.AsyncAnthropic | None = None,
 ) -> MiroFishResult:
     """Score a token's narrative using Claude as a fallback.
 
-    Uses claude-haiku-4-5 with max_tokens=300. Returns the same MiroFishResult
-    schema as the MiroFish client for compatibility with gate.py.
+    Raises ScorerError on any failure (empty response, malformed JSON, API error).
     """
     if client is None:
         client = anthropic.AsyncAnthropic(api_key=api_key)
 
-    message = await client.messages.create(
-        model=model_name,
-        max_tokens=300,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": seed["prompt"]}],
-    )
+    try:
+        message = await client.messages.create(
+            model=model_name,
+            max_tokens=300,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": seed["prompt"]}],
+        )
+    except Exception as e:
+        raise ScorerError(f"Claude API call failed: {e}") from e
 
-    text = message.content[0].text
-    data = _extract_json(text)
+    if not message.content:
+        raise ScorerError("Claude returned empty response content")
 
-    return MiroFishResult(
-        narrative_score=int(data["narrative_score"]),
-        virality_class=str(data["virality_class"]),
-        summary=str(data["summary"]),
-    )
+    # Find the first text block (handle non-TextBlock types)
+    text = None
+    for block in message.content:
+        if hasattr(block, "text"):
+            text = block.text
+            break
+    if text is None:
+        raise ScorerError("Claude response contained no text blocks")
+
+    try:
+        data = _extract_json(text)
+        return MiroFishResult(
+            narrative_score=int(data["narrative_score"]),
+            virality_class=str(data["virality_class"]),
+            summary=str(data["summary"]),
+        )
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+        raise ScorerError(f"Failed to parse Claude response: {e}") from e
 
 
 def _extract_json(text: str) -> dict:

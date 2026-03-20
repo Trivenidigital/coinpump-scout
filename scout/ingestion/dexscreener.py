@@ -33,23 +33,23 @@ async def _get_json(
                     wait = 2 ** attempt
                     logger.warning(
                         "DexScreener returned error, retrying",
-                        url=url, status=resp.status, wait=wait,
+                        status=resp.status, wait=wait,
                         attempt=attempt + 1, retries=retries,
                     )
                     await asyncio.sleep(wait)
                     continue
                 if resp.status != 200:
-                    logger.warning("DexScreener returned error", url=url, status=resp.status)
+                    logger.warning("DexScreener returned error", status=resp.status)
                     return None
                 return await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             wait = 2 ** attempt
             logger.warning(
                 "DexScreener request failed, retrying",
-                url=url, error=str(exc), wait=wait,
+                error=str(exc), wait=wait,
             )
             await asyncio.sleep(wait)
-    logger.warning("DexScreener failed after retries", url=url, retries=retries)
+    logger.warning("DexScreener failed after retries", retries=retries)
     return None
 
 
@@ -87,6 +87,11 @@ async def fetch_trending(
 
             results: list[CandidateToken] = []
             for pair_data in pairs:
+                # Skip tokens with short/empty addresses (C2)
+                base_token = pair_data.get("baseToken", {})
+                if len(base_token.get("address", "")) < 8:
+                    continue
+
                 fdv = float(pair_data.get("fdv") or 0)
                 if not (settings.MIN_MARKET_CAP <= fdv <= settings.MAX_MARKET_CAP):
                     continue

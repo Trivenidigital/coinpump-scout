@@ -8,6 +8,7 @@ import structlog
 import aiohttp
 
 from scout.config import Settings
+from scout.ingestion._helius import HELIUS_API, HELIUS_RPC, helius_request, helius_rpc_url
 from scout.models import CandidateToken
 
 logger = structlog.get_logger()
@@ -19,60 +20,21 @@ MORALIS_CHAIN_MAP = {
     "polygon": "polygon",
 }
 
-HELIUS_RPC = "https://mainnet.helius-rpc.com"
-HELIUS_API = "https://api.helius.xyz/v0"
 RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens"
 
-# Rate-limit guard: max 1 concurrent Helius call with delay between requests
-_helius_semaphore = asyncio.Semaphore(1)
-_HELIUS_DELAY = 0.5  # seconds between requests
-
-# Retry config for rate-limited requests
-_MAX_RETRIES = 4
-_RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
+# Rate limit Rugcheck concurrent calls to respect API constraints (lazily initialized)
+_rugcheck_semaphore: asyncio.Semaphore | None = None
+_rugcheck_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
-async def _helius_request(
-    session: aiohttp.ClientSession,
-    method: str,
-    url: str,
-    **kwargs,
-) -> dict | list | None:
-    """Make a Helius request with rate-limit semaphore and retry on 429."""
-    async with _helius_semaphore:
-        await asyncio.sleep(_HELIUS_DELAY)
-        for attempt in range(_MAX_RETRIES):
-            try:
-                if method == "post":
-                    async with session.post(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        if isinstance(data, dict) and "error" in data:
-                            logger.warning("Helius RPC error", error=data["error"])
-                            return None
-                        return data
-                else:
-                    async with session.get(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        if resp.status != 200:
-                            return None
-                        return await resp.json()
-            except aiohttp.ClientError as e:
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_BACKOFF[attempt])
-                    continue
-                raise
-    logger.warning("Helius request failed after retries", url=url)
-    return None
+def _get_rugcheck_semaphore() -> asyncio.Semaphore:
+    """Lazily create semaphore, resetting if the event loop changed."""
+    global _rugcheck_semaphore, _rugcheck_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _rugcheck_semaphore is None or _rugcheck_semaphore_loop is not loop:
+        _rugcheck_semaphore = asyncio.Semaphore(3)
+        _rugcheck_semaphore_loop = loop
+    return _rugcheck_semaphore
 
 
 async def enrich_holders(
@@ -113,59 +75,60 @@ async def _enrich_rugcheck(
     updates: dict = {}
 
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
-                logger.debug("Rugcheck returned non-200", status=resp.status, mint=token.contract_address)
-                return token
-            data = await resp.json()
+        async with _get_rugcheck_semaphore():
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    logger.debug("Rugcheck returned non-200", status=resp.status, mint=token.contract_address)
+                    return token
+                data = await resp.json()
 
-        # Holder data
-        top_holders = data.get("topHolders", [])
-        if top_holders:
-            # Count holders (Rugcheck returns top 20, but the actual count is higher)
-            # Use len as minimum, real count is typically much higher
-            holder_count = len(top_holders)
-            # If there's a "totalHolders" or similar field, prefer that
-            if data.get("holderCount"):
-                holder_count = int(data["holderCount"])
+            # Holder data
+            top_holders = data.get("topHolders", [])
+            if top_holders:
+                # Count holders (Rugcheck returns top 20, but the actual count is higher)
+                # Use len as minimum, real count is typically much higher
+                holder_count = len(top_holders)
+                # If there's a "totalHolders" or similar field, prefer that
+                if data.get("holderCount"):
+                    holder_count = int(data["holderCount"])
 
-            # Only update if we got more holders than currently known
-            if holder_count > token.holder_count:
-                updates["holder_count"] = holder_count
+                # Only update if we got more holders than currently known
+                if holder_count > token.holder_count:
+                    updates["holder_count"] = holder_count
 
-            # Top 3 concentration
-            if len(top_holders) >= 3:
-                total_pct = sum(h.get("pct", 0) for h in top_holders)
-                if total_pct > 0:
-                    top3_pct = sum(h.get("pct", 0) for h in top_holders[:3])
-                    updates["top3_wallet_concentration"] = top3_pct / 100.0
+                # Top 3 concentration
+                if len(top_holders) >= 3:
+                    total_pct = sum(h.get("pct", 0) for h in top_holders)
+                    if total_pct > 0:
+                        top3_pct = sum(h.get("pct", 0) for h in top_holders[:3])
+                        updates["top3_wallet_concentration"] = top3_pct / 100.0
 
-            # Deployer / insider concentration
-            insider_pct = sum(h.get("pct", 0) for h in top_holders if h.get("isInsider"))
-            if insider_pct > 0:
-                updates["deployer_supply_pct"] = insider_pct / 100.0
+                # Deployer / insider concentration
+                insider_pct = sum(h.get("pct", 0) for h in top_holders if h.get("isInsider"))
+                if insider_pct > 0:
+                    updates["deployer_supply_pct"] = insider_pct / 100.0
 
-        # LP lock status from markets
-        markets = data.get("markets", [])
-        for market in markets:
-            lp = market.get("lp", {})
-            locked_pct = lp.get("lpLockedPct", 0)
-            if locked_pct > 50:
-                updates["liquidity_locked"] = True
-                break
+            # LP lock status from markets
+            markets = data.get("markets", [])
+            for market in markets:
+                lp = market.get("lp", {})
+                locked_pct = lp.get("lpLockedPct", 0)
+                if locked_pct > 50:
+                    updates["liquidity_locked"] = True
+                    break
 
-        # Risk score
-        risk_score = data.get("score", 0)
-        risks = [r.get("name", "") for r in data.get("risks", [])]
+            # Risk score
+            risk_score = data.get("score", 0)
+            risks = [r.get("name", "") for r in data.get("risks", [])]
 
-        if risks:
-            logger.debug(
-                "Rugcheck report",
-                mint=token.contract_address,
-                risk_score=risk_score,
-                risks=risks,
-                holders=len(top_holders),
-            )
+            if risks:
+                logger.debug(
+                    "Rugcheck report",
+                    mint=token.contract_address,
+                    risk_score=risk_score,
+                    risks=risks,
+                    holders=len(top_holders),
+                )
 
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.debug("Rugcheck request failed", mint=token.contract_address, error=str(exc))
@@ -214,7 +177,7 @@ async def _helius_holder_count(
     mint: str, session: aiohttp.ClientSession, settings: Settings,
 ) -> int | None:
     """Fetch holder count from Helius DAS API (getTokenAccounts)."""
-    url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
+    url = helius_rpc_url(settings.HELIUS_API_KEY)
     payload = {
         "jsonrpc": "2.0",
         "id": "holder-enrichment",
@@ -222,7 +185,7 @@ async def _helius_holder_count(
         "params": {"mint": mint, "limit": 1000},
     }
     try:
-        data = await _helius_request(session, "post", url, json=payload)
+        data = await helius_request(session, "post", url, json=payload)
         if data is None:
             return None
         return data.get("result", {}).get("total", 0)
@@ -243,7 +206,7 @@ async def _helius_txn_analysis(
     result: dict = {}
 
     try:
-        txns = await _helius_request(session, "get", url, params=params)
+        txns = await helius_request(session, "get", url, params=params)
         if not txns or not isinstance(txns, list):
             return result
     except Exception:
@@ -308,7 +271,7 @@ async def _helius_deployer_concentration(
     as a percentage of total supply. For pump.fun tokens where authorities
     is empty, falls back to mint_extensions metadata update_authority.
     """
-    url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
+    url = helius_rpc_url(settings.HELIUS_API_KEY)
 
     # Get token metadata to find creator/authority
     payload = {
@@ -318,7 +281,7 @@ async def _helius_deployer_concentration(
         "params": {"id": mint},
     }
     try:
-        data = await _helius_request(session, "post", url, json=payload)
+        data = await helius_request(session, "post", url, json=payload)
         if data is None:
             return None
 
@@ -357,7 +320,7 @@ async def _helius_deployer_concentration(
             "method": "getTokenAccounts",
             "params": {"owner": deployer, "mint": mint, "limit": 1},
         }
-        bal_data = await _helius_request(session, "post", url, json=balance_payload)
+        bal_data = await helius_request(session, "post", url, json=balance_payload)
         if bal_data is None:
             return None
 

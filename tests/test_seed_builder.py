@@ -8,7 +8,7 @@ from scout.models import CandidateToken
 
 def _make_token(**overrides) -> CandidateToken:
     defaults = dict(
-        contract_address="0xtest", chain="solana", token_name="TestCoin",
+        contract_address="0xTEST1234", chain="solana", token_name="TestCoin",
         ticker="TST", token_age_days=2.5, market_cap_usd=50000.0,
         liquidity_usd=10000.0, volume_24h_usd=80000.0,
         holder_count=300, holder_growth_1h=25,

@@ -24,7 +24,7 @@ Scoring weights (must always document rationale):
 - on_coingecko: 8 points -- Listed on CoinGecko (strong CEX listing proxy)
 - multi_dex (dex_count >= 2): 5 points -- Traded on multiple DEXs (liquidity depth)
 
-Raw max: 209 points -> normalized to 0-100 scale (BL-016)
+Raw max: 224 points -> normalized to 0-100 scale (BL-016)
 Co-occurrence multiplier applied after normalization (BL-014)
 
 Hard disqualifiers:
@@ -36,6 +36,9 @@ Hard disqualifiers:
 from scout.config import Settings
 from scout.models import CandidateToken
 
+# Note: RAW_MAX includes Solana-only signals (35 pts). This intentionally creates
+# a Solana scoring premium — EVM tokens are structurally capped ~15% lower,
+# reflecting this project's focus on Solana meme coin detection.
 RAW_MAX = 224
 
 

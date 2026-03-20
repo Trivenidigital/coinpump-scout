@@ -78,7 +78,7 @@ async def test_fallback_uses_correct_model():
     await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
 
     call_kwargs = mock_client.messages.create.call_args.kwargs
-    assert call_kwargs["model"] == "claude-haiku-4-5-20251001"
+    assert call_kwargs["model"] == "claude-haiku-4-5"
     assert call_kwargs["max_tokens"] == 300
 
 
@@ -97,3 +97,31 @@ async def test_fallback_sends_system_and_user_messages():
     assert call_kwargs["system"] is not None
     assert call_kwargs["messages"][0]["role"] == "user"
     assert call_kwargs["messages"][0]["content"] == SAMPLE_SEED["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_empty_content_raises_scorer_error():
+    """CR-006: Empty content blocks should raise ScorerError."""
+    from scout.exceptions import ScorerError
+    mock_client = AsyncMock()
+    mock_message = MagicMock()
+    mock_message.content = []
+    mock_client.messages.create.return_value = mock_message
+
+    with pytest.raises(ScorerError, match="empty response"):
+        await score_narrative_fallback({"prompt": "test"}, "fake-key", client=mock_client)
+
+
+@pytest.mark.asyncio
+async def test_fallback_malformed_json_raises_scorer_error():
+    """CR-006: Malformed JSON should raise ScorerError."""
+    from scout.exceptions import ScorerError
+    mock_client = AsyncMock()
+    mock_block = MagicMock()
+    mock_block.text = "This is not JSON at all."
+    mock_message = MagicMock()
+    mock_message.content = [mock_block]
+    mock_client.messages.create.return_value = mock_message
+
+    with pytest.raises(ScorerError):
+        await score_narrative_fallback({"prompt": "test"}, "fake-key", client=mock_client)

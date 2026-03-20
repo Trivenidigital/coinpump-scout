@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     CONVICTION_THRESHOLD: int = 70
     QUANT_WEIGHT: float = 0.6
     NARRATIVE_WEIGHT: float = 0.4
+    MAX_CANDIDATES_PER_CYCLE: int = 50
 
     # Token filters
     MIN_MARKET_CAP: float = 10_000
@@ -28,6 +29,13 @@ class Settings(BaseSettings):
     MIN_LIQUIDITY_USD: float = 15_000
     CHAINS: list[str] = ["solana", "base", "ethereum"]
     PUMPFUN_ENABLED: bool = True
+
+    # Whale detection
+    SOL_PRICE_ESTIMATE_USD: float = 150.0
+    WHALE_USD_THRESHOLD: float = 1_000.0
+
+    # Well-known addresses (Solana)
+    USDC_MINT_SOLANA: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
     # MiroFish
     MIROFISH_URL: str = "http://localhost:5001"
@@ -57,6 +65,9 @@ class Settings(BaseSettings):
 
     # On-chain signal enrichment
     ONCHAIN_SIGNALS_ENABLED: bool = True
+
+    # Safety
+    GOPLUS_FAIL_CLOSED: bool = True  # False = fail open on unknown tokens (allows new tokens GoPlus hasn't indexed)
 
     # Database
     DB_PATH: Path = Path("scout.db")

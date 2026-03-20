@@ -16,7 +16,7 @@ async def db(tmp_path):
 
 def _make_token(**overrides) -> CandidateToken:
     defaults = dict(
-        contract_address="0xtest",
+        contract_address="0xTEST1234",
         chain="solana",
         token_name="Test",
         ticker="TST",
@@ -36,7 +36,7 @@ async def test_upsert_and_retrieve(db):
     await db.upsert_candidate(token)
     candidates = await db.get_candidates_above_score(60)
     assert len(candidates) == 1
-    assert candidates[0]["contract_address"] == "0xtest"
+    assert candidates[0]["contract_address"] == "0xTEST1234"
     assert candidates[0]["quant_score"] == 75
 
 
@@ -51,12 +51,12 @@ async def test_upsert_updates_existing(db):
 
 
 async def test_get_candidates_above_score_filters(db):
-    await db.upsert_candidate(_make_token(contract_address="0xa", quant_score=50))
-    await db.upsert_candidate(_make_token(contract_address="0xb", quant_score=70))
-    await db.upsert_candidate(_make_token(contract_address="0xc", quant_score=None))
+    await db.upsert_candidate(_make_token(contract_address="0xaaaa1234", quant_score=50))
+    await db.upsert_candidate(_make_token(contract_address="0xbbbb1234", quant_score=70))
+    await db.upsert_candidate(_make_token(contract_address="0xcccc1234", quant_score=None))
     results = await db.get_candidates_above_score(60)
     assert len(results) == 1
-    assert results[0]["contract_address"] == "0xb"
+    assert results[0]["contract_address"] == "0xbbbb1234"
 
 
 async def test_log_alert_and_daily_count(db):
@@ -79,3 +79,106 @@ async def test_get_recent_alerts(db):
     alerts = await db.get_recent_alerts(days=30)
     assert len(alerts) == 1
     assert alerts[0]["contract_address"] == "0xrecent"
+
+
+@pytest.mark.asyncio
+async def test_upsert_preserves_first_seen_at(db):
+    """CR-002: first_seen_at must survive re-upsert."""
+    from datetime import datetime, timezone
+    from scout.models import CandidateToken
+
+    original_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    token = CandidateToken(
+        contract_address="0xPRESERVE123", chain="solana",
+        token_name="Preserve", ticker="PRE",
+        first_seen_at=original_time,
+    )
+    await db.upsert_candidate(token)
+
+    # Upsert again with different data
+    updated = token.model_copy(update={
+        "market_cap_usd": 99999.0,
+        "first_seen_at": datetime.now(timezone.utc),
+    })
+    await db.upsert_candidate(updated)
+
+    cursor = await db._conn.execute(
+        "SELECT first_seen_at FROM candidates WHERE contract_address = ?",
+        ("0xPRESERVE123",),
+    )
+    result = await cursor.fetchone()
+    assert result[0] == original_time.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_log_volume_and_get_avg_volume(db):
+    """CR-024: log 3 volumes then verify avg is correct."""
+    addr = "0xVOL_HISTORY1"
+    await db.log_volume(addr, 100.0)
+    await db.log_volume(addr, 200.0)
+    await db.log_volume(addr, 300.0)
+    avg = await db.get_avg_volume(addr)
+    assert avg == pytest.approx(200.0)
+
+
+@pytest.mark.asyncio
+async def test_get_avg_volume_returns_none_when_empty(db):
+    """CR-024: no volume data -> returns None."""
+    result = await db.get_avg_volume("0xNO_VOLUME123")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_log_signal_snapshot_stores_all_fields(db):
+    """CR-024: log a snapshot, query it back, verify key fields."""
+    token = _make_token(
+        contract_address="0xSNAPSHOT123",
+        chain="solana",
+        token_name="Snap",
+        ticker="SNP",
+        quant_score=42,
+    )
+    await db.log_signal_snapshot(
+        scan_cycle=7,
+        token=token,
+        quant_score=42,
+        signals_fired=["vol_liq_ratio", "holder_growth"],
+        disqualified=False,
+        disqualify_reason=None,
+        narrative_score=60,
+        conviction_score=70.5,
+        alerted=True,
+        safe=True,
+    )
+
+    snapshots = await db.get_signal_snapshots(contract_address="0xSNAPSHOT123")
+    assert len(snapshots) == 1
+    snap = snapshots[0]
+    assert snap["scan_cycle"] == 7
+    assert snap["contract_address"] == "0xSNAPSHOT123"
+    assert snap["quant_score"] == 42
+    assert snap["signals_fired"] == "vol_liq_ratio,holder_growth"
+    assert snap["narrative_score"] == 60
+    assert snap["conviction_score"] == pytest.approx(70.5)
+    assert snap["alerted"] == 1
+    assert snap["safe"] == 1
+
+
+@pytest.mark.asyncio
+async def test_prune_old_data(db):
+    from datetime import datetime, timezone
+    await db._conn.execute(
+        "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
+        ("0xOLD_TOKEN12", 50, "2020-01-01T00:00:00"),
+    )
+    await db._conn.execute(
+        "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
+        ("0xNEW_TOKEN12", 60, datetime.now(timezone.utc).isoformat()),
+    )
+    await db._conn.commit()
+
+    await db.prune_old_data(retention_days=30)
+
+    cursor = await db._conn.execute("SELECT COUNT(*) FROM score_history")
+    row = await cursor.fetchone()
+    assert row[0] == 1

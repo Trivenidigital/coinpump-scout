@@ -49,6 +49,13 @@ async def fetch_trending_pools(
                 continue
 
             for pool in data.get("data", []):
+                # Skip tokens with short/empty addresses (C2)
+                _rel = pool.get("relationships", {})
+                _btid = _rel.get("base_token", {}).get("data", {}).get("id", "")
+                _addr = _btid.split("_", 1)[-1] if "_" in _btid else _btid
+                if len(_addr) < 8:
+                    continue
+
                 try:
                     token = CandidateToken.from_geckoterminal(pool, chain=chain)
                     if settings.MIN_MARKET_CAP <= token.market_cap_usd <= settings.MAX_MARKET_CAP:

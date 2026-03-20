@@ -81,7 +81,7 @@ async def run_cycle(
     # Stage 2: Aggregate
     all_candidates = aggregate(
         list(dex_tokens) + list(gecko_tokens) + list(birdeye_tokens) + list(pumpfun_tokens)
-    )
+    )[:settings.MAX_CANDIDATES_PER_CYCLE]
     stats["tokens_scanned"] = len(all_candidates)
 
     # Enrich holders sequentially to respect Helius rate limits
@@ -123,30 +123,29 @@ async def run_cycle(
             elif token.deployer_supply_pct > 0.20:
                 disqualify_reason = f"deployer_supply_{token.deployer_supply_pct:.2f}"
 
-        # Log snapshot for every token (for analysis)
-        await db.log_signal_snapshot(
-            scan_cycle=scan_cycle,
-            token=updated,
-            quant_score=points,
-            signals_fired=signals,
-            disqualified=disqualified,
-            disqualify_reason=disqualify_reason,
-        )
-
         if points >= settings.MIN_SCORE:
+            # Promoted tokens get their snapshot in Stage 4-5 with narrative/conviction data
             scored.append((updated, signals))
             stats["candidates_promoted"] += 1
+        else:
+            # Non-promoted tokens: log snapshot now (they won't reach Stage 4-5)
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle,
+                token=updated,
+                quant_score=points,
+                signals_fired=signals,
+                disqualified=disqualified,
+                disqualify_reason=disqualify_reason,
+            )
+        # Batch commit: flush all high-frequency writes for this token in one round-trip.
+        await db.commit()
 
     # Stage 3b: Social + news enrichment (only for promoted candidates to save API calls)
     if scored:
         enriched_scored = []
         for token, signals in scored:
-            if settings.SOCIAL_ENRICHMENT_ENABLED:
-                token = await enrich_social_sentiment(token, session, settings)
-                await asyncio.sleep(3.0)
-            if settings.CRYPTOPANIC_API_KEY:
-                token = await enrich_news_sentiment(token, session, settings)
-                await asyncio.sleep(1.0)
+            token = await enrich_social_sentiment(token, session, settings)
+            token = await enrich_news_sentiment(token, session, settings)
             await db.upsert_candidate(token)
             enriched_scored.append((token, signals))
         scored = enriched_scored
@@ -167,11 +166,13 @@ async def run_cycle(
                 conviction_score=conviction,
                 alerted=False,
             )
+            await db.commit()
             continue
 
         # Stage 6: Safety check + alert
         token_safe = await is_safe(
-            gated_token.contract_address, gated_token.chain, session
+            gated_token.contract_address, gated_token.chain, session,
+            fail_closed=settings.GOPLUS_FAIL_CLOSED,
         )
         if not token_safe:
             logger.warning(
@@ -185,6 +186,7 @@ async def run_cycle(
                 conviction_score=conviction,
                 alerted=False, safe=False,
             )
+            await db.commit()
             continue
 
         if dry_run:
@@ -209,6 +211,7 @@ async def run_cycle(
             conviction_score=conviction,
             alerted=True, safe=True,
         )
+        await db.commit()
 
     return stats
 

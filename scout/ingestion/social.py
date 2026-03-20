@@ -56,8 +56,8 @@ async def _fetch_reddit_mentions(
         "restrict_sr": "",
     }
     headers = {
-        # Reddit requires a non-generic User-Agent or it returns 429
-        "User-Agent": "Mozilla/5.0 (compatible; CoinPumpScout/1.0; +https://github.com/Trivenidigital)",
+        # Reddit ToS requires bot-format User-Agent: platform:app_id:version (by /u/username)
+        "User-Agent": "script:CoinPumpScout:v1.0 (by /u/Trivenidigital)",
     }
 
     try:
@@ -352,6 +352,7 @@ async def enrich_social_sentiment(
         reddit_mentions = await _fetch_reddit_mentions(
             token.ticker, token.token_name, session,
         )
+        await asyncio.sleep(3.0)  # respect Reddit rate limits
 
         # 2. LunarCrush (only if API key is configured)
         lunarcrush_data: dict = {}

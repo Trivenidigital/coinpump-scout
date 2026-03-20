@@ -161,6 +161,16 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_signal_snapshots_cycle
                 ON signal_snapshots (scan_cycle);
 
+            CREATE TABLE IF NOT EXISTS volume_history (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_address  TEXT NOT NULL,
+                volume_24h        REAL NOT NULL,
+                recorded_at       TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_volume_history_contract
+                ON volume_history (contract_address);
+
             CREATE TABLE IF NOT EXISTS outcomes (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
@@ -315,6 +325,37 @@ class Database:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+
+    # ------------------------------------------------------------------
+    # Volume history (on-chain signal enrichment)
+    # ------------------------------------------------------------------
+
+    async def log_volume(self, contract_address: str, volume_24h: float) -> None:
+        """Record a 24h volume data point for spike detection."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
+            (contract_address, volume_24h, now),
+        )
+        await self._conn.commit()
+
+    async def get_avg_volume(self, contract_address: str, lookback: int = 3) -> float | None:
+        """Get the average 24h volume from the last *lookback* recordings.
+
+        Returns None if no previous recordings exist.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cursor = await self._conn.execute(
+            "SELECT volume_24h FROM volume_history WHERE contract_address = ? ORDER BY recorded_at DESC LIMIT ?",
+            (contract_address, lookback),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return None
+        return sum(row[0] for row in rows) / len(rows)
 
     # ------------------------------------------------------------------
     # Signal snapshots (analytics)

@@ -19,6 +19,7 @@ from scout.ingestion.birdeye import fetch_trending_birdeye
 from scout.ingestion.dexscreener import fetch_trending
 from scout.ingestion.geckoterminal import fetch_trending_pools
 from scout.ingestion.holder_enricher import enrich_holders
+from scout.ingestion.onchain_signals import enrich_onchain_signals
 from scout.ingestion.pumpfun import fetch_pumpfun_graduated
 from scout.ingestion.social import enrich_social_sentiment
 from scout.models import CandidateToken
@@ -95,6 +96,11 @@ async def run_cycle(
             if prev is not None:
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
+
+    # Stage 2c: On-chain signal enrichment
+    if settings.ONCHAIN_SIGNALS_ENABLED:
+        for i, token in enumerate(enriched):
+            enriched[i] = await enrich_onchain_signals(token, session, db, settings)
 
     # Stage 3: Score
     scored = []

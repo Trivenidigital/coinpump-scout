@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # Social enrichment
     LUNARCRUSH_API_KEY: str = ""
     SOCIAL_ENRICHMENT_ENABLED: bool = True
+    TWITTER_SCOUT_ENABLED: bool = True
+    SOCIALDATA_API_KEY: str = ""
+
+    # On-chain signal enrichment
+    ONCHAIN_SIGNALS_ENABLED: bool = True
 
     # Database
     DB_PATH: Path = Path("scout.db")

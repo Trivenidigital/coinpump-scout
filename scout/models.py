@@ -39,6 +39,25 @@ class CandidateToken(BaseModel):
     small_txn_ratio: float = 0.0
     social_score: float = 0.0
 
+    # On-chain signal enrichment fields
+    smart_money_buys: int = 0
+    whale_buys: int = 0
+    liquidity_locked: bool = False
+    volume_spike: bool = False
+    volume_spike_ratio: float = 0.0
+    holder_gini_healthy: bool = False
+    whale_txns_1h: int = 0
+
+    # Social presence fields
+    has_twitter: bool = False
+    has_telegram: bool = False
+    has_github: bool = False
+
+    # CEX listing and multi-DEX fields
+    on_coingecko: bool = False
+    multi_dex: bool = False
+    dex_count: int = 0
+
     # Populated by pipeline stages
     quant_score: int | None = None
     narrative_score: int | None = None

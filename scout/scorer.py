@@ -11,8 +11,20 @@ Scoring weights (must always document rationale):
 - unique_buyers (high relative to txns): 15 points -- Organic vs bot (BL-021)
 - solana_bonus: 5 points -- Meme premium (BL-030)
 - small_txn_ratio (>60% small txns): 5 points -- Organic distribution (BL-024)
+- smart_money_buys (>0): 10 points -- Known alpha wallets buying (on-chain signal)
+- whale_buys (>=3): 5 points -- Multiple large buyers (on-chain signal)
+- liquidity_locked: 10 points -- Reduced rug risk (on-chain signal)
+- volume_spike (>5x): 15 points -- Extreme volume anomaly (on-chain signal)
+- volume_spike (>3x): 10 points -- Significant volume anomaly (on-chain signal)
+- holder_gini_healthy: 5 points -- Healthy top-holder distribution (on-chain signal)
+- whale_txns_1h (>=3): 5 points -- Multiple large SOL transactions (on-chain signal)
+- has_twitter: 3 points -- Twitter/X presence via DexScreener socials or SocialData API
+- has_telegram: 3 points -- Telegram community presence (legitimacy signal)
+- has_github: 2 points -- GitHub repository presence (active development signal)
+- on_coingecko: 8 points -- Listed on CoinGecko (strong CEX listing proxy)
+- multi_dex (dex_count >= 2): 5 points -- Traded on multiple DEXs (liquidity depth)
 
-Raw max: 138 points -> normalized to 0-100 scale (BL-016)
+Raw max: 209 points -> normalized to 0-100 scale (BL-016)
 Co-occurrence multiplier applied after normalization (BL-014)
 
 Hard disqualifiers:
@@ -24,7 +36,7 @@ Hard disqualifiers:
 from scout.config import Settings
 from scout.models import CandidateToken
 
-RAW_MAX = 138
+RAW_MAX = 209
 
 
 def score(
@@ -138,6 +150,84 @@ def score(
     if token.small_txn_ratio > 0.60:
         points += 5
         signals.append("small_txn_ratio")
+
+    # Signal 11: Smart Money Buys -- 10 points (on-chain signal)
+    # Known profitable wallets buying indicates informed money flow
+    if token.smart_money_buys > 0:
+        points += 10
+        signals.append("smart_money_buys")
+
+    # Signal 12: Whale Buys -- 5 points (on-chain signal)
+    # Multiple large buyers (>=$1K) suggest strong conviction from big wallets
+    if token.whale_buys >= 3:
+        points += 5
+        signals.append("whale_buys")
+
+    # Signal 13: Liquidity Locked -- 10 points (on-chain signal)
+    # Locked/burned LP greatly reduces rug-pull risk
+    if token.liquidity_locked:
+        points += 10
+        signals.append("liquidity_locked")
+
+    # Signal 14: Volume Spike -- 10/15 points (on-chain signal)
+    # Abnormally high volume vs historical average signals breakout momentum.
+    # >5x is extreme (15 pts), >3x is significant (10 pts). Mutually exclusive.
+    if token.volume_spike:
+        if token.volume_spike_ratio > 5.0:
+            points += 15
+            signals.append("volume_spike_5x")
+        elif token.volume_spike_ratio > 3.0:
+            points += 10
+            signals.append("volume_spike_3x")
+
+    # Signal 15: Holder Distribution Health -- 5 points (on-chain signal)
+    # Top-5 holders owning < 30% of top-20 total indicates broad distribution,
+    # reducing rug-pull risk and suggesting organic community accumulation.
+    if token.holder_gini_healthy:
+        points += 5
+        signals.append("holder_gini_healthy")
+
+    # Signal 16: Whale Transactions -- 5 points (on-chain signal)
+    # Multiple large (> 1 SOL) transactions in the last hour indicate strong
+    # conviction buying from well-capitalised wallets on a microcap token.
+    if token.whale_txns_1h >= 3:
+        points += 5
+        signals.append("whale_txns_1h")
+
+    # Signal 17: Twitter/X Presence -- 3 points (social presence)
+    # Having an active Twitter account linked in DexScreener or detected via
+    # SocialData API indicates community engagement and marketing effort.
+    if token.has_twitter:
+        points += 3
+        signals.append("has_twitter")
+
+    # Signal 18: Telegram Presence -- 3 points (social presence)
+    # A Telegram community group signals active community management and
+    # reduces probability of being a silent rug-pull.
+    if token.has_telegram:
+        points += 3
+        signals.append("has_telegram")
+
+    # Signal 19: GitHub Presence -- 2 points (development activity)
+    # Having a GitHub repository suggests active development, which
+    # distinguishes legitimate projects from pure meme/pump tokens.
+    if token.has_github:
+        points += 2
+        signals.append("has_github")
+
+    # Signal 20: CoinGecko Listing -- 8 points (strong legitimacy signal)
+    # Being listed on CoinGecko strongly correlates with CEX listings and
+    # broader market visibility. One of the strongest legitimacy indicators.
+    if token.on_coingecko:
+        points += 8
+        signals.append("on_coingecko")
+
+    # Signal 21: Multi-DEX Listing -- 5 points (liquidity depth)
+    # Traded on 2+ DEXs (detected via Jupiter route plans) indicates deeper
+    # liquidity, broader market access, and healthier token ecosystem.
+    if token.multi_dex and token.dex_count >= 2:
+        points += 5
+        signals.append("multi_dex")
 
     # BL-016: Normalize raw sum to 0-100 scale
     normalized = min(100, int(points * 100 / RAW_MAX))

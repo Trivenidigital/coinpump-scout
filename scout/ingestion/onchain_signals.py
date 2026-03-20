@@ -27,22 +27,11 @@ DEXSCREENER_PAIR_URL = "https://api.dexscreener.com/tokens/v1"
 # Known smart-money / alpha wallets (curated set — extend as needed)
 SMART_MONEY_WALLETS: set[str] = set()
 
-# Whale buy threshold in USD-equivalent token amount
-_WHALE_USD_THRESHOLD = 1_000.0
-
 # Rate-limit guard: reuse the same pattern as holder_enricher
 _helius_semaphore = asyncio.Semaphore(1)
 _HELIUS_DELAY = 0.5
 _MAX_RETRIES = 4
 _RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
-
-# Dead/burn addresses used to detect permanently locked liquidity
-_BURN_ADDRESSES = {
-    "1nc1nerator11111111111111111111111111111111",
-    "11111111111111111111111111111111",
-    "1111111111111111111111111111111111111111111",
-}
-
 
 # ------------------------------------------------------------------
 # Helius request helper (mirrors holder_enricher._helius_request)
@@ -165,8 +154,8 @@ async def check_smart_money(
                 sol_spent += abs(float(nt.get("amount", 0))) / 1e9
 
         # Use a conservative SOL price floor for whale classification
-        estimated_usd = sol_spent * 150  # conservative SOL/USD estimate
-        if estimated_usd >= _WHALE_USD_THRESHOLD:
+        estimated_usd = sol_spent * settings.SOL_PRICE_ESTIMATE_USD
+        if estimated_usd >= settings.WHALE_USD_THRESHOLD:
             whale_count += 1
 
     return {
@@ -394,9 +383,6 @@ async def check_whale_activity(
 
 _JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote"
 
-# USDC mint on Solana (used as output mint for Jupiter quote)
-_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-
 
 async def check_multi_dex(
     mint: str,
@@ -426,7 +412,7 @@ async def check_multi_dex(
         # Request a quote for a minimal amount (1 token unit in smallest denomination)
         params = {
             "inputMint": mint,
-            "outputMint": _USDC_MINT,
+            "outputMint": settings.USDC_MINT_SOLANA,
             "amount": "1000000",  # 1 token (assuming 6 decimals; Jupiter handles this)
             "slippageBps": "500",  # 5% slippage for illiquid tokens
         }

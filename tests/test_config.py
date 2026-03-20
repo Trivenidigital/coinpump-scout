@@ -73,6 +73,13 @@ def test_settings_custom_overrides():
     assert s.MAX_MIROFISH_JOBS_PER_DAY == 100
 
 
+def test_whale_detection_defaults():
+    s = Settings(TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="c", ANTHROPIC_API_KEY="k")
+    assert s.SOL_PRICE_ESTIMATE_USD == 150.0
+    assert s.WHALE_USD_THRESHOLD == 1_000.0
+    assert s.USDC_MINT_SOLANA == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+
 def test_settings_weight_sum_validation():
     with pytest.raises(ValueError, match="must sum to 1.0"):
         Settings(

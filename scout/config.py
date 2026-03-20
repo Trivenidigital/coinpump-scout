@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     CHAINS: list[str] = ["solana", "base", "ethereum"]
     PUMPFUN_ENABLED: bool = True
 
+    # Whale detection
+    SOL_PRICE_ESTIMATE_USD: float = 150.0
+    WHALE_USD_THRESHOLD: float = 1_000.0
+
+    # Well-known addresses (Solana)
+    USDC_MINT_SOLANA: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
     # MiroFish
     MIROFISH_URL: str = "http://localhost:5001"
     MIROFISH_TIMEOUT_SEC: int = 180

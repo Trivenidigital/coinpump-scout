@@ -15,9 +15,11 @@ from scout.alerter import send_alert
 from scout.config import Settings
 from scout.db import Database
 from scout.gate import evaluate
+from scout.ingestion.birdeye import fetch_trending_birdeye
 from scout.ingestion.dexscreener import fetch_trending
 from scout.ingestion.geckoterminal import fetch_trending_pools
 from scout.ingestion.holder_enricher import enrich_holders
+from scout.ingestion.pumpfun import fetch_pumpfun_graduated
 from scout.models import CandidateToken
 from scout.safety import is_safe
 from scout.scorer import score
@@ -39,11 +41,26 @@ async def run_cycle(
     scan_cycle = int(datetime.now(timezone.utc).timestamp())
 
     # Stage 1: Parallel ingestion
-    dex_tokens, gecko_tokens = await asyncio.gather(
+    ingestion_coros = [
         fetch_trending(session, settings),
         fetch_trending_pools(session, settings),
-        return_exceptions=True,
+        fetch_trending_birdeye(session, settings),
+    ]
+    if settings.PUMPFUN_ENABLED:
+        ingestion_coros.append(fetch_pumpfun_graduated(session, settings))
+
+    ingestion_results = await asyncio.gather(
+        *ingestion_coros, return_exceptions=True,
     )
+
+    # Unpack results (positional)
+    dex_tokens = ingestion_results[0]
+    gecko_tokens = ingestion_results[1]
+    birdeye_tokens = ingestion_results[2]
+    pumpfun_tokens: list[CandidateToken] | Exception = (
+        ingestion_results[3] if settings.PUMPFUN_ENABLED else []
+    )
+
     # Handle exceptions from gather
     if isinstance(dex_tokens, Exception):
         logger.warning("DexScreener ingestion failed", error=str(dex_tokens))
@@ -51,9 +68,17 @@ async def run_cycle(
     if isinstance(gecko_tokens, Exception):
         logger.warning("GeckoTerminal ingestion failed", error=str(gecko_tokens))
         gecko_tokens = []
+    if isinstance(birdeye_tokens, Exception):
+        logger.warning("Birdeye ingestion failed", error=str(birdeye_tokens))
+        birdeye_tokens = []
+    if isinstance(pumpfun_tokens, Exception):
+        logger.warning("PumpFun ingestion failed", error=str(pumpfun_tokens))
+        pumpfun_tokens = []
 
     # Stage 2: Aggregate
-    all_candidates = aggregate(list(dex_tokens) + list(gecko_tokens))
+    all_candidates = aggregate(
+        list(dex_tokens) + list(gecko_tokens) + list(birdeye_tokens) + list(pumpfun_tokens)
+    )
     stats["tokens_scanned"] = len(all_candidates)
 
     # Enrich holders sequentially to respect Helius rate limits

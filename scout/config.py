@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     MIN_VOL_LIQ_RATIO: float = 5.0
     MIN_LIQUIDITY_USD: float = 15_000
     CHAINS: list[str] = ["solana", "base", "ethereum"]
+    PUMPFUN_ENABLED: bool = True
 
     # MiroFish
     MIROFISH_URL: str = "http://localhost:5001"
@@ -37,6 +38,9 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: str
     DISCORD_WEBHOOK_URL: str = ""
+
+    # Birdeye (optional — Solana token data)
+    BIRDEYE_API_KEY: str = ""
 
     # Holder enrichment (optional)
     HELIUS_API_KEY: str = ""

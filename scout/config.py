@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     CONVICTION_THRESHOLD: int = 70
     QUANT_WEIGHT: float = 0.6
     NARRATIVE_WEIGHT: float = 0.4
+    MAX_CANDIDATES_PER_CYCLE: int = 50
 
     # Token filters
     MIN_MARKET_CAP: float = 10_000

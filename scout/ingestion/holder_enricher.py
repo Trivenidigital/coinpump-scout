@@ -22,6 +22,9 @@ MORALIS_CHAIN_MAP = {
 
 RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens"
 
+# Rate limit Rugcheck concurrent calls to respect API constraints
+_rugcheck_semaphore = asyncio.Semaphore(3)  # max 3 concurrent Rugcheck calls
+
 
 async def enrich_holders(
     token: CandidateToken,
@@ -61,59 +64,60 @@ async def _enrich_rugcheck(
     updates: dict = {}
 
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
-                logger.debug("Rugcheck returned non-200", status=resp.status, mint=token.contract_address)
-                return token
-            data = await resp.json()
+        async with _rugcheck_semaphore:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    logger.debug("Rugcheck returned non-200", status=resp.status, mint=token.contract_address)
+                    return token
+                data = await resp.json()
 
-        # Holder data
-        top_holders = data.get("topHolders", [])
-        if top_holders:
-            # Count holders (Rugcheck returns top 20, but the actual count is higher)
-            # Use len as minimum, real count is typically much higher
-            holder_count = len(top_holders)
-            # If there's a "totalHolders" or similar field, prefer that
-            if data.get("holderCount"):
-                holder_count = int(data["holderCount"])
+            # Holder data
+            top_holders = data.get("topHolders", [])
+            if top_holders:
+                # Count holders (Rugcheck returns top 20, but the actual count is higher)
+                # Use len as minimum, real count is typically much higher
+                holder_count = len(top_holders)
+                # If there's a "totalHolders" or similar field, prefer that
+                if data.get("holderCount"):
+                    holder_count = int(data["holderCount"])
 
-            # Only update if we got more holders than currently known
-            if holder_count > token.holder_count:
-                updates["holder_count"] = holder_count
+                # Only update if we got more holders than currently known
+                if holder_count > token.holder_count:
+                    updates["holder_count"] = holder_count
 
-            # Top 3 concentration
-            if len(top_holders) >= 3:
-                total_pct = sum(h.get("pct", 0) for h in top_holders)
-                if total_pct > 0:
-                    top3_pct = sum(h.get("pct", 0) for h in top_holders[:3])
-                    updates["top3_wallet_concentration"] = top3_pct / 100.0
+                # Top 3 concentration
+                if len(top_holders) >= 3:
+                    total_pct = sum(h.get("pct", 0) for h in top_holders)
+                    if total_pct > 0:
+                        top3_pct = sum(h.get("pct", 0) for h in top_holders[:3])
+                        updates["top3_wallet_concentration"] = top3_pct / 100.0
 
-            # Deployer / insider concentration
-            insider_pct = sum(h.get("pct", 0) for h in top_holders if h.get("isInsider"))
-            if insider_pct > 0:
-                updates["deployer_supply_pct"] = insider_pct / 100.0
+                # Deployer / insider concentration
+                insider_pct = sum(h.get("pct", 0) for h in top_holders if h.get("isInsider"))
+                if insider_pct > 0:
+                    updates["deployer_supply_pct"] = insider_pct / 100.0
 
-        # LP lock status from markets
-        markets = data.get("markets", [])
-        for market in markets:
-            lp = market.get("lp", {})
-            locked_pct = lp.get("lpLockedPct", 0)
-            if locked_pct > 50:
-                updates["liquidity_locked"] = True
-                break
+            # LP lock status from markets
+            markets = data.get("markets", [])
+            for market in markets:
+                lp = market.get("lp", {})
+                locked_pct = lp.get("lpLockedPct", 0)
+                if locked_pct > 50:
+                    updates["liquidity_locked"] = True
+                    break
 
-        # Risk score
-        risk_score = data.get("score", 0)
-        risks = [r.get("name", "") for r in data.get("risks", [])]
+            # Risk score
+            risk_score = data.get("score", 0)
+            risks = [r.get("name", "") for r in data.get("risks", [])]
 
-        if risks:
-            logger.debug(
-                "Rugcheck report",
-                mint=token.contract_address,
-                risk_score=risk_score,
-                risks=risks,
-                holders=len(top_holders),
-            )
+            if risks:
+                logger.debug(
+                    "Rugcheck report",
+                    mint=token.contract_address,
+                    risk_score=risk_score,
+                    risks=risks,
+                    holders=len(top_holders),
+                )
 
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.debug("Rugcheck request failed", mint=token.contract_address, error=str(exc))

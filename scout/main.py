@@ -81,7 +81,7 @@ async def run_cycle(
     # Stage 2: Aggregate
     all_candidates = aggregate(
         list(dex_tokens) + list(gecko_tokens) + list(birdeye_tokens) + list(pumpfun_tokens)
-    )
+    )[:settings.MAX_CANDIDATES_PER_CYCLE]
     stats["tokens_scanned"] = len(all_candidates)
 
     # Enrich holders sequentially to respect Helius rate limits

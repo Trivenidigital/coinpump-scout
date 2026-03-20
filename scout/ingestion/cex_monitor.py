@@ -14,6 +14,10 @@ logger = structlog.get_logger()
 
 _COINGECKO_SEARCH_URL = "https://api.coingecko.com/api/v3/search"
 
+# Rate limit CoinGecko API calls (free tier ~10-30 req/min)
+_coingecko_semaphore = asyncio.Semaphore(1)
+_COINGECKO_DELAY = 2.0
+
 
 async def check_cex_listing(
     ticker: str,
@@ -47,43 +51,45 @@ async def check_cex_listing(
     defaults: dict = {"on_coingecko": False, "cex_listed": False}
 
     try:
-        params = {"query": ticker}
-        async with session.get(
-            _COINGECKO_SEARCH_URL,
-            params=params,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status == 429:
-                logger.debug("CoinGecko rate limited, skipping", ticker=ticker)
+        async with _coingecko_semaphore:
+            await asyncio.sleep(_COINGECKO_DELAY)
+            params = {"query": ticker}
+            async with session.get(
+                _COINGECKO_SEARCH_URL,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 429:
+                    logger.debug("CoinGecko rate limited, skipping", ticker=ticker)
+                    return defaults
+                if resp.status != 200:
+                    logger.debug(
+                        "CoinGecko search returned non-200",
+                        ticker=ticker,
+                        status=resp.status,
+                    )
+                    return defaults
+
+                data = await resp.json()
+                coins = data.get("coins", [])
+
+                # Check if any result has a matching symbol (case-insensitive)
+                ticker_upper = ticker.upper()
+                for coin in coins:
+                    symbol = (coin.get("symbol") or "").upper()
+                    if symbol == ticker_upper:
+                        coin_id = coin.get("id", "")
+                        if contract_address and coin_id:
+                            logger.debug(
+                                "CoinGecko ticker match (verify with contract address)",
+                                ticker=ticker,
+                                coin_id=coin_id,
+                                contract_address=contract_address,
+                            )
+                        # Found on CoinGecko -- likely has CEX listings
+                        return {"on_coingecko": True, "cex_listed": True}
+
                 return defaults
-            if resp.status != 200:
-                logger.debug(
-                    "CoinGecko search returned non-200",
-                    ticker=ticker,
-                    status=resp.status,
-                )
-                return defaults
-
-            data = await resp.json()
-            coins = data.get("coins", [])
-
-            # Check if any result has a matching symbol (case-insensitive)
-            ticker_upper = ticker.upper()
-            for coin in coins:
-                symbol = (coin.get("symbol") or "").upper()
-                if symbol == ticker_upper:
-                    coin_id = coin.get("id", "")
-                    if contract_address and coin_id:
-                        logger.debug(
-                            "CoinGecko ticker match (verify with contract address)",
-                            ticker=ticker,
-                            coin_id=coin_id,
-                            contract_address=contract_address,
-                        )
-                    # Found on CoinGecko -- likely has CEX listings
-                    return {"on_coingecko": True, "cex_listed": True}
-
-            return defaults
 
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.debug("CoinGecko search failed", ticker=ticker, error=str(exc))

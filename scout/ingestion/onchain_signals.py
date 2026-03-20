@@ -392,7 +392,7 @@ async def check_whale_activity(
 # 6. Multi-DEX Listing Check (Jupiter route plans)
 # ------------------------------------------------------------------
 
-_JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
+_JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote"
 
 # USDC mint on Solana (used as output mint for Jupiter quote)
 _USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"

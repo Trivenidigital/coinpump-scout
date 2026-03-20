@@ -83,8 +83,8 @@ async def send_alert(
                 )
     except AlertDeliveryError:
         raise
-    except Exception as exc:
-        raise AlertDeliveryError(f"Telegram send failed: {exc}") from exc
+    except Exception:
+        raise AlertDeliveryError("Telegram send failed: network error") from None
 
     # --- Discord (optional) ---
     if settings.DISCORD_WEBHOOK_URL:

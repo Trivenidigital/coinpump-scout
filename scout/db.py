@@ -123,6 +123,44 @@ class Database:
                 recorded_at       TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS signal_snapshots (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_cycle            INTEGER NOT NULL,
+                contract_address      TEXT NOT NULL,
+                chain                 TEXT NOT NULL,
+                token_name            TEXT NOT NULL,
+                ticker                TEXT NOT NULL,
+                token_age_days        REAL DEFAULT 0,
+                market_cap_usd        REAL DEFAULT 0,
+                liquidity_usd         REAL DEFAULT 0,
+                volume_24h_usd        REAL DEFAULT 0,
+                holder_count          INTEGER DEFAULT 0,
+                holder_growth_1h      INTEGER DEFAULT 0,
+                buys_1h               INTEGER DEFAULT 0,
+                sells_1h              INTEGER DEFAULT 0,
+                unique_buyers_1h      INTEGER DEFAULT 0,
+                top3_wallet_concentration REAL DEFAULT 0,
+                deployer_supply_pct   REAL DEFAULT 0,
+                small_txn_ratio       REAL DEFAULT 0,
+                social_mentions_24h   INTEGER DEFAULT 0,
+                quant_score           INTEGER DEFAULT 0,
+                signals_fired         TEXT,
+                disqualified          INTEGER DEFAULT 0,
+                disqualify_reason     TEXT,
+                narrative_score       INTEGER,
+                conviction_score      REAL,
+                alerted               INTEGER DEFAULT 0,
+                safe                  INTEGER,
+                scanned_at            TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_signal_snapshots_contract
+                ON signal_snapshots (contract_address);
+            CREATE INDEX IF NOT EXISTS idx_signal_snapshots_scanned
+                ON signal_snapshots (scanned_at);
+            CREATE INDEX IF NOT EXISTS idx_signal_snapshots_cycle
+                ON signal_snapshots (scan_cycle);
+
             CREATE TABLE IF NOT EXISTS outcomes (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
@@ -277,6 +315,75 @@ class Database:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+
+    # ------------------------------------------------------------------
+    # Signal snapshots (analytics)
+    # ------------------------------------------------------------------
+
+    async def log_signal_snapshot(
+        self,
+        scan_cycle: int,
+        token: "CandidateToken",
+        quant_score: int,
+        signals_fired: list[str],
+        disqualified: bool = False,
+        disqualify_reason: str | None = None,
+        narrative_score: int | None = None,
+        conviction_score: float | None = None,
+        alerted: bool = False,
+        safe: bool | None = None,
+    ) -> None:
+        """Log a complete signal snapshot for every token in every scan cycle."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            """INSERT INTO signal_snapshots
+               (scan_cycle, contract_address, chain, token_name, ticker,
+                token_age_days, market_cap_usd, liquidity_usd, volume_24h_usd,
+                holder_count, holder_growth_1h, buys_1h, sells_1h,
+                unique_buyers_1h, top3_wallet_concentration, deployer_supply_pct,
+                small_txn_ratio, social_mentions_24h,
+                quant_score, signals_fired, disqualified, disqualify_reason,
+                narrative_score, conviction_score, alerted, safe, scanned_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                scan_cycle,
+                token.contract_address, token.chain, token.token_name, token.ticker,
+                token.token_age_days, token.market_cap_usd, token.liquidity_usd,
+                token.volume_24h_usd, token.holder_count, token.holder_growth_1h,
+                token.buys_1h, token.sells_1h, token.unique_buyers_1h,
+                token.top3_wallet_concentration, token.deployer_supply_pct,
+                token.small_txn_ratio, token.social_mentions_24h,
+                quant_score, ",".join(signals_fired),
+                1 if disqualified else 0, disqualify_reason,
+                narrative_score, conviction_score,
+                1 if alerted else 0, (1 if safe else 0) if safe is not None else None,
+                now,
+            ),
+        )
+        await self._conn.commit()
+
+    async def get_signal_snapshots(
+        self,
+        contract_address: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Query signal snapshots for analysis."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        if contract_address:
+            cursor = await self._conn.execute(
+                "SELECT * FROM signal_snapshots WHERE contract_address = ? ORDER BY scanned_at DESC LIMIT ?",
+                (contract_address, limit),
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT * FROM signal_snapshots ORDER BY scanned_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
     async def get_daily_mirofish_count(self) -> int:
         """Count MiroFish jobs run today (UTC)."""

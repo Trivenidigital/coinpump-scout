@@ -5,6 +5,7 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime, timezone
 
 import aiohttp
 import structlog
@@ -35,6 +36,7 @@ async def run_cycle(
     Returns stats dict with tokens_scanned, candidates_promoted, alerts_fired, etc.
     """
     stats = {"tokens_scanned": 0, "candidates_promoted": 0, "alerts_fired": 0}
+    scan_cycle = int(datetime.now(timezone.utc).timestamp())
 
     # Stage 1: Parallel ingestion
     dex_tokens, gecko_tokens = await asyncio.gather(
@@ -82,6 +84,28 @@ async def run_cycle(
         await db.log_score(token.contract_address, points)
         updated = token.model_copy(update={"quant_score": points})
         await db.upsert_candidate(updated)
+
+        # Determine disqualification reason
+        disqualified = points == 0
+        disqualify_reason = None
+        if disqualified:
+            if token.liquidity_usd < settings.MIN_LIQUIDITY_USD:
+                disqualify_reason = f"liquidity_below_{settings.MIN_LIQUIDITY_USD}"
+            elif token.top3_wallet_concentration > 0.40:
+                disqualify_reason = f"wash_trade_concentration_{token.top3_wallet_concentration:.2f}"
+            elif token.deployer_supply_pct > 0.20:
+                disqualify_reason = f"deployer_supply_{token.deployer_supply_pct:.2f}"
+
+        # Log snapshot for every token (for analysis)
+        await db.log_signal_snapshot(
+            scan_cycle=scan_cycle,
+            token=updated,
+            quant_score=points,
+            signals_fired=signals,
+            disqualified=disqualified,
+            disqualify_reason=disqualify_reason,
+        )
+
         if points >= settings.MIN_SCORE:
             scored.append((updated, signals))
             stats["candidates_promoted"] += 1
@@ -93,14 +117,32 @@ async def run_cycle(
         )
 
         if not should_alert:
+            # Update snapshot with narrative/conviction even if not alerting
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle, token=gated_token,
+                quant_score=gated_token.quant_score or 0,
+                signals_fired=signals,
+                narrative_score=gated_token.narrative_score,
+                conviction_score=conviction,
+                alerted=False,
+            )
             continue
 
         # Stage 6: Safety check + alert
-        if not await is_safe(
+        token_safe = await is_safe(
             gated_token.contract_address, gated_token.chain, session
-        ):
+        )
+        if not token_safe:
             logger.warning(
                 "Token failed safety check", token=gated_token.contract_address
+            )
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle, token=gated_token,
+                quant_score=gated_token.quant_score or 0,
+                signals_fired=signals,
+                narrative_score=gated_token.narrative_score,
+                conviction_score=conviction,
+                alerted=False, safe=False,
             )
             continue
 
@@ -110,13 +152,22 @@ async def run_cycle(
                 token=gated_token.token_name,
                 conviction=conviction,
             )
-            continue
+        else:
+            await send_alert(gated_token, signals, session, settings)
+            await db.log_alert(
+                gated_token.contract_address, gated_token.chain, conviction
+            )
+            stats["alerts_fired"] += 1
 
-        await send_alert(gated_token, signals, session, settings)
-        await db.log_alert(
-            gated_token.contract_address, gated_token.chain, conviction
+        # Log full snapshot for alerted tokens
+        await db.log_signal_snapshot(
+            scan_cycle=scan_cycle, token=gated_token,
+            quant_score=gated_token.quant_score or 0,
+            signals_fired=signals,
+            narrative_score=gated_token.narrative_score,
+            conviction_score=conviction,
+            alerted=True, safe=True,
         )
-        stats["alerts_fired"] += 1
 
     return stats
 

@@ -257,7 +257,9 @@ class Database:
                 ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
             values,
         )
-        # High-frequency: caller is responsible for batched commit() after the scoring loop.
+        # Commit immediately: candidates table is the primary persistence record.
+        # Analytics writes (log_score, log_holder_snapshot, etc.) remain batched.
+        await self._conn.commit()
 
     async def get_candidates_above_score(self, min_score: int) -> list[dict]:
         """Get candidates with quant_score >= min_score."""
@@ -507,10 +509,17 @@ class Database:
         return row[0] if row else 0
 
     async def prune_old_data(self, retention_days: int = 30) -> None:
-        """Delete time-series data older than retention_days."""
+        """Delete time-series data older than retention_days.
+
+        Uses Python's datetime.isoformat() for the cutoff so the format matches
+        how timestamps are stored (ISO 8601 with 'T' separator and UTC offset).
+        ISO 8601 strings are lexicographically ordered, so string comparison is
+        correct and avoids the SQLite datetime() space-vs-T format mismatch.
+        """
         if self._conn is None:
             raise RuntimeError("Database not initialized.")
-        cutoff = f"-{retention_days} days"
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         for table, col in [
             ("score_history", "scanned_at"),
             ("holder_snapshots", "recorded_at"),
@@ -518,7 +527,7 @@ class Database:
             ("signal_snapshots", "scanned_at"),
         ]:
             await self._conn.execute(
-                f"DELETE FROM {table} WHERE {col} < datetime('now', ?)",
+                f"DELETE FROM {table} WHERE {col} < ?",
                 (cutoff,),
             )
         await self._conn.commit()

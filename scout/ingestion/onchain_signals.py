@@ -47,7 +47,7 @@ async def check_smart_money(
     Returns:
         {"smart_money_buys": int, "whale_buys": int, "unique_buyers_recent": int}
     """
-    defaults = {"smart_money_buys": 0, "whale_buys": 0, "unique_buyers_recent": 0}
+    defaults = {"smart_money_buys": 0, "whale_buys": 0, "unique_buyers_recent": 0, "whale_txns_1h": 0}
 
     if not settings.HELIUS_API_KEY:
         return defaults
@@ -66,6 +66,7 @@ async def check_smart_money(
     buyer_wallets: set[str] = set()
     smart_money_count = 0
     whale_count = 0
+    whale_txn_count = 0
 
     for txn in txns:
         fee_payer = txn.get("feePayer", "")
@@ -105,10 +106,15 @@ async def check_smart_money(
         if estimated_usd >= settings.WHALE_USD_THRESHOLD:
             whale_count += 1
 
+        # Also count whale-sized SOL transactions (>1 SOL) for whale_txns signal
+        if sol_spent > 1.0:
+            whale_txn_count += 1
+
     return {
         "smart_money_buys": smart_money_count,
         "whale_buys": whale_count,
         "unique_buyers_recent": len(buyer_wallets),
+        "whale_txns_1h": whale_txn_count,
     }
 
 
@@ -291,9 +297,11 @@ async def check_whale_activity(
 ) -> dict:
     """Count recent large transactions (> 1 SOL equivalent) for *mint*.
 
-    Re-uses the same Helius parsed-transactions endpoint as
-    ``check_smart_money``, scanning the last 50 SWAP transactions and
-    counting those where the SOL value transferred exceeds 1 SOL.
+    .. deprecated::
+        ``whale_txns_1h`` is now computed inside ``check_smart_money`` to
+        avoid a redundant Helius API call. This function is retained for
+        backward-compatibility but is no longer called from
+        ``enrich_onchain_signals``.
 
     Returns:
         {"whale_txns_1h": int}
@@ -455,10 +463,9 @@ async def enrich_onchain_signals(
         dist_data = await check_holder_distribution(token.contract_address, session, settings)
         updates["holder_gini_healthy"] = dist_data["holder_gini_healthy"]
 
-    # 5. Whale alert — large transactions (Solana only, requires Helius)
+    # 5. Whale alert — whale_txns_1h already computed by check_smart_money above
     if token.chain == "solana" and settings.HELIUS_API_KEY:
-        whale_data = await check_whale_activity(token.contract_address, session, settings)
-        updates["whale_txns_1h"] = whale_data["whale_txns_1h"]
+        updates["whale_txns_1h"] = sm_data.get("whale_txns_1h", 0)
 
     # 6. Multi-DEX listing check (Solana only — Jupiter is Solana-only)
     if token.chain == "solana":

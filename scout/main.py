@@ -123,21 +123,22 @@ async def run_cycle(
             elif token.deployer_supply_pct > 0.20:
                 disqualify_reason = f"deployer_supply_{token.deployer_supply_pct:.2f}"
 
-        # Log snapshot for every token (for analysis)
-        await db.log_signal_snapshot(
-            scan_cycle=scan_cycle,
-            token=updated,
-            quant_score=points,
-            signals_fired=signals,
-            disqualified=disqualified,
-            disqualify_reason=disqualify_reason,
-        )
-        # Batch commit: flush all high-frequency writes for this token in one round-trip.
-        await db.commit()
-
         if points >= settings.MIN_SCORE:
+            # Promoted tokens get their snapshot in Stage 4-5 with narrative/conviction data
             scored.append((updated, signals))
             stats["candidates_promoted"] += 1
+        else:
+            # Non-promoted tokens: log snapshot now (they won't reach Stage 4-5)
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle,
+                token=updated,
+                quant_score=points,
+                signals_fired=signals,
+                disqualified=disqualified,
+                disqualify_reason=disqualify_reason,
+            )
+        # Batch commit: flush all high-frequency writes for this token in one round-trip.
+        await db.commit()
 
     # Stage 3b: Social + news enrichment (only for promoted candidates to save API calls)
     if scored:

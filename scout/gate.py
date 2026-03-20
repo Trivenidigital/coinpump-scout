@@ -75,7 +75,7 @@ async def _get_narrative_score(
     seed = build_seed(token, signals_fired=signals_fired)
 
     # Reserve the MiroFish job slot BEFORE the call to prevent race conditions
-    await db.log_mirofish_job(token.contract_address)
+    job_id = await db.log_mirofish_job(token.contract_address)
 
     try:
         result = await simulate(seed, session, settings)
@@ -87,5 +87,5 @@ async def _get_narrative_score(
             return result.narrative_score
         except Exception as e:
             logger.warning("LLM fallback also failed", contract_address=token.contract_address, error=str(e))
-            await db.rollback_mirofish_job(token.contract_address)
+            await db.rollback_mirofish_job(job_id)
             raise ScorerError(f"Both MiroFish and LLM fallback failed: {e}") from e

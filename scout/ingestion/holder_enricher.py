@@ -23,14 +23,17 @@ MORALIS_CHAIN_MAP = {
 RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens"
 
 # Rate limit Rugcheck concurrent calls to respect API constraints (lazily initialized)
-_rugcheck_semaphore: asyncio.Semaphore | None = None  # max 3 concurrent Rugcheck calls
+_rugcheck_semaphore: asyncio.Semaphore | None = None
+_rugcheck_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_rugcheck_semaphore() -> asyncio.Semaphore:
-    """Lazily create semaphore in the current event loop."""
-    global _rugcheck_semaphore
-    if _rugcheck_semaphore is None:
+    """Lazily create semaphore, resetting if the event loop changed."""
+    global _rugcheck_semaphore, _rugcheck_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _rugcheck_semaphore is None or _rugcheck_semaphore_loop is not loop:
         _rugcheck_semaphore = asyncio.Semaphore(3)
+        _rugcheck_semaphore_loop = loop
     return _rugcheck_semaphore
 
 

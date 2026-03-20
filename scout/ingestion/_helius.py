@@ -15,11 +15,16 @@ _helius_semaphore: asyncio.Semaphore | None = None
 HELIUS_DELAY = 0.5
 
 
+_helius_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
 def _get_helius_semaphore() -> asyncio.Semaphore:
-    """Lazily create semaphore in the current event loop."""
-    global _helius_semaphore
-    if _helius_semaphore is None:
+    """Lazily create semaphore, resetting if the event loop changed."""
+    global _helius_semaphore, _helius_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _helius_semaphore is None or _helius_semaphore_loop is not loop:
         _helius_semaphore = asyncio.Semaphore(1)
+        _helius_semaphore_loop = loop
     return _helius_semaphore
 
 _MAX_RETRIES = 4
@@ -73,5 +78,5 @@ async def helius_request(
             if attempt < _MAX_RETRIES - 1:
                 logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
                 await asyncio.sleep(wait)
-    logger.warning("Helius request failed after retries")
+    logger.warning("Helius request failed after retries", reason="rate_limited_429", attempts=_MAX_RETRIES)
     return None

@@ -19,11 +19,16 @@ _coingecko_semaphore: asyncio.Semaphore | None = None
 _COINGECKO_DELAY = 2.0
 
 
+_coingecko_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
 def _get_coingecko_semaphore() -> asyncio.Semaphore:
-    """Lazily create semaphore in the current event loop."""
-    global _coingecko_semaphore
-    if _coingecko_semaphore is None:
+    """Lazily create semaphore, resetting if the event loop changed."""
+    global _coingecko_semaphore, _coingecko_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _coingecko_semaphore is None or _coingecko_semaphore_loop is not loop:
         _coingecko_semaphore = asyncio.Semaphore(1)
+        _coingecko_semaphore_loop = loop
     return _coingecko_semaphore
 
 # CoinGecko chain name mapping
@@ -106,6 +111,9 @@ async def check_cex_listing(
     """
     defaults: dict = {"on_coingecko": False, "cex_listed": False}
 
+    # Collect candidates to verify OUTSIDE the semaphore
+    candidates_to_verify: list[dict] = []
+
     try:
         async with _get_coingecko_semaphore():
             await asyncio.sleep(_COINGECKO_DELAY)
@@ -129,27 +137,32 @@ async def check_cex_listing(
                 data = await resp.json()
                 coins = data.get("coins", [])
 
-                # Check if any result has a matching symbol (case-insensitive)
                 ticker_upper = ticker.upper()
                 for coin in coins:
                     symbol = (coin.get("symbol") or "").upper()
                     if symbol == ticker_upper:
-                        coin_id = coin.get("id", "")
-                        # If we have contract_address, verify via CoinGecko contract endpoint
-                        if contract_address and chain and coin_id:
-                            verified = await _verify_contract(
-                                coin_id, contract_address, chain, session,
-                            )
-                            if not verified:
-                                logger.debug(
-                                    "CoinGecko ticker match but contract mismatch",
-                                    ticker=ticker, coin_id=coin_id,
-                                    contract_address=contract_address,
-                                )
-                                continue  # skip this match, try next
-                        return {"on_coingecko": True, "cex_listed": True}
+                        candidates_to_verify.append(coin)
 
-                return defaults
+        # Semaphore released — verify contract addresses outside it
+        if not candidates_to_verify:
+            return defaults
+
+        for coin in candidates_to_verify:
+            coin_id = coin.get("id", "")
+            if contract_address and chain and coin_id:
+                verified = await _verify_contract(
+                    coin_id, contract_address, chain, session,
+                )
+                if not verified:
+                    logger.debug(
+                        "CoinGecko ticker match but contract mismatch",
+                        ticker=ticker, coin_id=coin_id,
+                        contract_address=contract_address,
+                    )
+                    continue
+            return {"on_coingecko": True, "cex_listed": True}
+
+        return defaults
 
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.debug("CoinGecko search failed", ticker=ticker, error=str(exc))

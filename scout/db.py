@@ -316,28 +316,25 @@ class Database:
     # MiroFish jobs
     # ------------------------------------------------------------------
 
-    async def log_mirofish_job(self, contract_address: str) -> None:
-        """Log a MiroFish simulation job."""
+    async def log_mirofish_job(self, contract_address: str) -> int:
+        """Log a MiroFish simulation job. Returns the row ID for rollback."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
+        cursor = await self._conn.execute(
             "INSERT INTO mirofish_jobs (contract_address, created_at) VALUES (?, ?)",
             (contract_address, now),
         )
         await self._conn.commit()
+        return cursor.lastrowid
 
-    async def rollback_mirofish_job(self, contract_address: str) -> None:
-        """Remove the most recent MiroFish job for a contract (rollback on failure)."""
+    async def rollback_mirofish_job(self, job_id: int) -> None:
+        """Remove a MiroFish job by exact row ID (rollback on failure)."""
         if self._conn is None:
             raise RuntimeError("Database not initialized.")
         await self._conn.execute(
-            """DELETE FROM mirofish_jobs WHERE id = (
-                SELECT id FROM mirofish_jobs
-                WHERE contract_address = ?
-                ORDER BY created_at DESC LIMIT 1
-            )""",
-            (contract_address,),
+            "DELETE FROM mirofish_jobs WHERE id = ?",
+            (job_id,),
         )
         await self._conn.commit()
 

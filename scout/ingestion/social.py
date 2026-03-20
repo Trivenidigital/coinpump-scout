@@ -352,6 +352,7 @@ async def enrich_social_sentiment(
         reddit_mentions = await _fetch_reddit_mentions(
             token.ticker, token.token_name, session,
         )
+        await asyncio.sleep(3.0)  # respect Reddit rate limits
 
         # 2. LunarCrush (only if API key is configured)
         lunarcrush_data: dict = {}

@@ -130,6 +130,7 @@ async def enrich_news_sentiment(
 
     try:
         result = await check_cryptopanic_sentiment(token.ticker, session, settings)
+        await asyncio.sleep(1.0)  # respect CryptoPanic rate limits
 
         updates = {}
         if result["has_news"]:

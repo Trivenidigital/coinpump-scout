@@ -141,12 +141,8 @@ async def run_cycle(
     if scored:
         enriched_scored = []
         for token, signals in scored:
-            if settings.SOCIAL_ENRICHMENT_ENABLED:
-                token = await enrich_social_sentiment(token, session, settings)
-                await asyncio.sleep(3.0)
-            if settings.CRYPTOPANIC_API_KEY:
-                token = await enrich_news_sentiment(token, session, settings)
-                await asyncio.sleep(1.0)
+            token = await enrich_social_sentiment(token, session, settings)
+            token = await enrich_news_sentiment(token, session, settings)
             await db.upsert_candidate(token)
             enriched_scored.append((token, signals))
         scored = enriched_scored

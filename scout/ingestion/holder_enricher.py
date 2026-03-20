@@ -22,8 +22,16 @@ MORALIS_CHAIN_MAP = {
 
 RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens"
 
-# Rate limit Rugcheck concurrent calls to respect API constraints
-_rugcheck_semaphore = asyncio.Semaphore(3)  # max 3 concurrent Rugcheck calls
+# Rate limit Rugcheck concurrent calls to respect API constraints (lazily initialized)
+_rugcheck_semaphore: asyncio.Semaphore | None = None  # max 3 concurrent Rugcheck calls
+
+
+def _get_rugcheck_semaphore() -> asyncio.Semaphore:
+    """Lazily create semaphore in the current event loop."""
+    global _rugcheck_semaphore
+    if _rugcheck_semaphore is None:
+        _rugcheck_semaphore = asyncio.Semaphore(3)
+    return _rugcheck_semaphore
 
 
 async def enrich_holders(
@@ -64,7 +72,7 @@ async def _enrich_rugcheck(
     updates: dict = {}
 
     try:
-        async with _rugcheck_semaphore:
+        async with _get_rugcheck_semaphore():
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status != 200:
                     logger.debug("Rugcheck returned non-200", status=resp.status, mint=token.contract_address)

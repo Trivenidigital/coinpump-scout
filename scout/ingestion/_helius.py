@@ -10,9 +10,17 @@ logger = structlog.get_logger()
 HELIUS_RPC = "https://mainnet.helius-rpc.com"
 HELIUS_API = "https://api.helius.xyz/v0"
 
-# Single semaphore shared across ALL Helius callers
-helius_semaphore = asyncio.Semaphore(1)
+# Single semaphore shared across ALL Helius callers (lazily initialized)
+_helius_semaphore: asyncio.Semaphore | None = None
 HELIUS_DELAY = 0.5
+
+
+def _get_helius_semaphore() -> asyncio.Semaphore:
+    """Lazily create semaphore in the current event loop."""
+    global _helius_semaphore
+    if _helius_semaphore is None:
+        _helius_semaphore = asyncio.Semaphore(1)
+    return _helius_semaphore
 
 _MAX_RETRIES = 4
 _RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
@@ -36,7 +44,7 @@ async def helius_request(
     """
     for attempt in range(_MAX_RETRIES):
         need_retry = False
-        async with helius_semaphore:
+        async with _get_helius_semaphore():
             await asyncio.sleep(HELIUS_DELAY)
             try:
                 req_fn = session.post if method == "post" else session.get

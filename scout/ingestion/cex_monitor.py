@@ -14,9 +14,17 @@ logger = structlog.get_logger()
 
 _COINGECKO_SEARCH_URL = "https://api.coingecko.com/api/v3/search"
 
-# Rate limit CoinGecko API calls (free tier ~10-30 req/min)
-_coingecko_semaphore = asyncio.Semaphore(1)
+# Rate limit CoinGecko API calls (free tier ~10-30 req/min, lazily initialized)
+_coingecko_semaphore: asyncio.Semaphore | None = None
 _COINGECKO_DELAY = 2.0
+
+
+def _get_coingecko_semaphore() -> asyncio.Semaphore:
+    """Lazily create semaphore in the current event loop."""
+    global _coingecko_semaphore
+    if _coingecko_semaphore is None:
+        _coingecko_semaphore = asyncio.Semaphore(1)
+    return _coingecko_semaphore
 
 # CoinGecko chain name mapping
 _COINGECKO_CHAIN_MAP = {
@@ -99,7 +107,7 @@ async def check_cex_listing(
     defaults: dict = {"on_coingecko": False, "cex_listed": False}
 
     try:
-        async with _coingecko_semaphore:
+        async with _get_coingecko_semaphore():
             await asyncio.sleep(_COINGECKO_DELAY)
             params = {"query": ticker}
             async with session.get(

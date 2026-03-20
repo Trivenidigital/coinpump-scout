@@ -56,8 +56,8 @@ async def _fetch_reddit_mentions(
         "restrict_sr": "",
     }
     headers = {
-        # Reddit requires a non-generic User-Agent or it returns 429
-        "User-Agent": "Mozilla/5.0 (compatible; CoinPumpScout/1.0; +https://github.com/Trivenidigital)",
+        # Reddit ToS requires bot-format User-Agent: platform:app_id:version (by /u/username)
+        "User-Agent": "script:CoinPumpScout:v1.0 (by /u/Trivenidigital)",
     }
 
     try:

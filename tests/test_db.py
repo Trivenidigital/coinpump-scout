@@ -111,6 +111,60 @@ async def test_upsert_preserves_first_seen_at(db):
 
 
 @pytest.mark.asyncio
+async def test_log_volume_and_get_avg_volume(db):
+    """CR-024: log 3 volumes then verify avg is correct."""
+    addr = "0xVOL_HISTORY1"
+    await db.log_volume(addr, 100.0)
+    await db.log_volume(addr, 200.0)
+    await db.log_volume(addr, 300.0)
+    avg = await db.get_avg_volume(addr)
+    assert avg == pytest.approx(200.0)
+
+
+@pytest.mark.asyncio
+async def test_get_avg_volume_returns_none_when_empty(db):
+    """CR-024: no volume data -> returns None."""
+    result = await db.get_avg_volume("0xNO_VOLUME123")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_log_signal_snapshot_stores_all_fields(db):
+    """CR-024: log a snapshot, query it back, verify key fields."""
+    token = _make_token(
+        contract_address="0xSNAPSHOT123",
+        chain="solana",
+        token_name="Snap",
+        ticker="SNP",
+        quant_score=42,
+    )
+    await db.log_signal_snapshot(
+        scan_cycle=7,
+        token=token,
+        quant_score=42,
+        signals_fired=["vol_liq_ratio", "holder_growth"],
+        disqualified=False,
+        disqualify_reason=None,
+        narrative_score=60,
+        conviction_score=70.5,
+        alerted=True,
+        safe=True,
+    )
+
+    snapshots = await db.get_signal_snapshots(contract_address="0xSNAPSHOT123")
+    assert len(snapshots) == 1
+    snap = snapshots[0]
+    assert snap["scan_cycle"] == 7
+    assert snap["contract_address"] == "0xSNAPSHOT123"
+    assert snap["quant_score"] == 42
+    assert snap["signals_fired"] == "vol_liq_ratio,holder_growth"
+    assert snap["narrative_score"] == 60
+    assert snap["conviction_score"] == pytest.approx(70.5)
+    assert snap["alerted"] == 1
+    assert snap["safe"] == 1
+
+
+@pytest.mark.asyncio
 async def test_prune_old_data(db):
     from datetime import datetime, timezone
     await db._conn.execute(

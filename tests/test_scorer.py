@@ -402,6 +402,87 @@ class TestEdgeCases:
         assert "token_age" in signals
 
 
+class TestNewSignals:
+    """CR-022: One test per untested scorer signal."""
+
+    def test_smart_money_buys_fires(self):
+        token = _make_token(smart_money_buys=1, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "smart_money_buys" in signals
+
+    def test_whale_buys_fires(self):
+        token = _make_token(whale_buys=3, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "whale_buys" in signals
+
+    def test_liquidity_locked_fires(self):
+        token = _make_token(liquidity_locked=True, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "liquidity_locked" in signals
+
+    def test_volume_spike_5x_fires(self):
+        token = _make_token(volume_spike=True, volume_spike_ratio=6.0, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "volume_spike_5x" in signals
+        assert "volume_spike_3x" not in signals
+
+    def test_volume_spike_3x_fires(self):
+        token = _make_token(volume_spike=True, volume_spike_ratio=4.0, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "volume_spike_3x" in signals
+        assert "volume_spike_5x" not in signals
+
+    def test_holder_gini_healthy_fires(self):
+        token = _make_token(holder_gini_healthy=True, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "holder_gini_healthy" in signals
+
+    def test_whale_txns_1h_fires(self):
+        token = _make_token(whale_txns_1h=3, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "whale_txns_1h" in signals
+
+    def test_has_twitter_fires(self):
+        token = _make_token(has_twitter=True, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "has_twitter" in signals
+
+    def test_has_telegram_fires(self):
+        token = _make_token(has_telegram=True, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "has_telegram" in signals
+
+    def test_has_github_fires(self):
+        token = _make_token(has_github=True, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "has_github" in signals
+
+    def test_on_coingecko_fires(self):
+        token = _make_token(on_coingecko=True, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "on_coingecko" in signals
+
+    def test_multi_dex_fires(self):
+        token = _make_token(multi_dex=True, dex_count=2, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "multi_dex" in signals
+
+    def test_has_news_fires(self):
+        token = _make_token(has_news=True, news_mentions=1, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "has_news" in signals
+
+    def test_bullish_news_fires(self):
+        token = _make_token(news_sentiment=0.5, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "bullish_news" in signals
+
+    def test_small_txn_ratio_fires(self):
+        token = _make_token(small_txn_ratio=0.7, liquidity_usd=20000)
+        _, signals = score(token, _settings())
+        assert "small_txn_ratio" in signals
+
+
 class TestRawMax:
     """CR-001: RAW_MAX must stay in sync with the actual signal point totals."""
 

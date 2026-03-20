@@ -108,3 +108,75 @@ async def test_enrich_api_failure_returns_unenriched(mock_aiohttp):
         enriched = await enrich_holders(token, session, settings)
 
     assert enriched.holder_count == 0  # unchanged, graceful degradation
+
+
+# ---------------------------------------------------------------------------
+# Rugcheck path tests (CR-023)
+# ---------------------------------------------------------------------------
+
+async def test_enrich_rugcheck_success(mock_aiohttp):
+    """Rugcheck success path sets holder_count, top3_wallet_concentration, deployer_supply_pct."""
+    token = _make_token(chain="solana", contract_address="SoLAddrRug1")
+    settings = _settings()  # no Helius key -> only Rugcheck runs
+
+    rugcheck_url = "https://api.rugcheck.xyz/v1/tokens/SoLAddrRug1/report"
+    mock_aiohttp.get(
+        rugcheck_url,
+        payload={
+            "holderCount": 500,
+            "topHolders": [
+                {"pct": 10, "isInsider": False},
+                {"pct": 8, "isInsider": False},
+                {"pct": 7, "isInsider": True},
+                {"pct": 5, "isInsider": False},
+            ],
+            "markets": [],
+        },
+    )
+
+    async with aiohttp.ClientSession() as session:
+        enriched = await enrich_holders(token, session, settings)
+
+    assert enriched.holder_count == 500
+    # top 3 pct = (10+8+7) out of (10+8+7+5)=30 total => 25/30 but calculated as top3/100
+    assert enriched.top3_wallet_concentration == pytest.approx(0.25, abs=0.01)
+    # insider pct = 7 => 7/100 = 0.07
+    assert enriched.deployer_supply_pct == pytest.approx(0.07, abs=0.001)
+
+
+async def test_enrich_rugcheck_failure_returns_unenriched(mock_aiohttp):
+    """Rugcheck 500 -> token returned unchanged (graceful degradation)."""
+    token = _make_token(chain="solana", contract_address="SoLAddrRug2")
+    settings = _settings()
+
+    rugcheck_url = "https://api.rugcheck.xyz/v1/tokens/SoLAddrRug2/report"
+    mock_aiohttp.get(rugcheck_url, status=500)
+
+    async with aiohttp.ClientSession() as session:
+        enriched = await enrich_holders(token, session, settings)
+
+    assert enriched.holder_count == 0
+    assert enriched.top3_wallet_concentration == 0.0
+    assert enriched.deployer_supply_pct == 0.0
+
+
+async def test_enrich_rugcheck_sets_liquidity_locked(mock_aiohttp):
+    """Rugcheck market with lpLockedPct > 50 sets liquidity_locked=True."""
+    token = _make_token(chain="solana", contract_address="SoLAddrRug3")
+    settings = _settings()
+
+    rugcheck_url = "https://api.rugcheck.xyz/v1/tokens/SoLAddrRug3/report"
+    mock_aiohttp.get(
+        rugcheck_url,
+        payload={
+            "topHolders": [],
+            "markets": [
+                {"lp": {"lpLockedPct": 75}},
+            ],
+        },
+    )
+
+    async with aiohttp.ClientSession() as session:
+        enriched = await enrich_holders(token, session, settings)
+
+    assert enriched.liquidity_locked is True

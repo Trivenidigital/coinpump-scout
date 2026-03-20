@@ -192,7 +192,11 @@ async def _enrich_solana_helius(
 
     # Transaction analysis (unique buyers, small txn ratio)
     txn_data = await _helius_txn_analysis(token.contract_address, session, settings)
-    updates.update(txn_data)
+    # Only update fields that Rugcheck didn't already set
+    for key, value in txn_data.items():
+        if key == "top3_wallet_concentration" and token.top3_wallet_concentration > 0:
+            continue  # Rugcheck already set this
+        updates[key] = value
 
     # Deployer concentration (only if not already set by Rugcheck)
     if token.deployer_supply_pct == 0:

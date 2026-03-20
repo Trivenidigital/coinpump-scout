@@ -57,14 +57,13 @@ async def score_narrative_fallback(
 
     try:
         data = _extract_json(text)
-    except (json.JSONDecodeError, ValueError) as e:
-        raise ScorerError(f"Failed to parse Claude response as JSON: {e}") from e
-
-    return MiroFishResult(
-        narrative_score=int(data["narrative_score"]),
-        virality_class=str(data["virality_class"]),
-        summary=str(data["summary"]),
-    )
+        return MiroFishResult(
+            narrative_score=int(data["narrative_score"]),
+            virality_class=str(data["virality_class"]),
+            summary=str(data["summary"]),
+        )
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+        raise ScorerError(f"Failed to parse Claude response: {e}") from e
 
 
 def _extract_json(text: str) -> dict:

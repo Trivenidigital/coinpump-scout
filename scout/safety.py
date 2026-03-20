@@ -28,7 +28,8 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
     - buy_tax < 10%
     - sell_tax < 10%
 
-    On API failure: log warning, return True (fail open — don't block alerts).
+    On network/HTTP error: return True (fail open — don't block alerts).
+    On empty result (unknown token/chain): return False (fail closed — can't verify safety).
     """
     chain_id = CHAIN_ID_MAP.get(chain, chain)
     url = f"{GOPLUS_BASE}/{chain_id}"

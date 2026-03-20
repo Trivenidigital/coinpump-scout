@@ -54,7 +54,8 @@ def aggregate(candidates: list[CandidateToken]) -> list[CandidateToken]:
 
         if token.volume_spike_ratio > existing.volume_spike_ratio:
             updates["volume_spike_ratio"] = token.volume_spike_ratio
-        if abs(token.news_sentiment) > abs(existing.news_sentiment):
+        # Prefer more positive sentiment (pre-pump detection favors bullish signals)
+        if token.news_sentiment > existing.news_sentiment:
             updates["news_sentiment"] = token.news_sentiment
 
         if token.top3_wallet_concentration > 0 and existing.top3_wallet_concentration == 0:

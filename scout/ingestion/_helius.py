@@ -29,19 +29,21 @@ async def helius_request(
     url: str,
     **kwargs,
 ) -> dict | list | None:
-    """Make a Helius request with shared semaphore and retry on 429."""
-    async with helius_semaphore:
-        await asyncio.sleep(HELIUS_DELAY)
-        for attempt in range(_MAX_RETRIES):
+    """Make a Helius request with shared semaphore and retry on 429.
+
+    Semaphore is held only during the actual request, released before
+    retry backoff sleeps to avoid blocking other callers.
+    """
+    for attempt in range(_MAX_RETRIES):
+        need_retry = False
+        async with helius_semaphore:
+            await asyncio.sleep(HELIUS_DELAY)
             try:
                 req_fn = session.post if method == "post" else session.get
                 async with req_fn(url, **kwargs) as resp:
                     if resp.status == 429:
-                        wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                        logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
-                        await asyncio.sleep(wait)
-                        continue
-                    if method == "post":
+                        need_retry = True
+                    elif method == "post":
                         resp.raise_for_status()
                         data = await resp.json()
                         if isinstance(data, dict) and "error" in data:
@@ -54,8 +56,14 @@ async def helius_request(
                         return await resp.json()
             except aiohttp.ClientError:
                 if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_BACKOFF[attempt])
-                    continue
-                raise
-    logger.warning("Helius request failed after retries", url=url)
+                    need_retry = True
+                else:
+                    raise
+        # Semaphore released — sleep outside it so other callers aren't blocked
+        if need_retry:
+            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
+            if attempt < _MAX_RETRIES - 1:
+                logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
+                await asyncio.sleep(wait)
+    logger.warning("Helius request failed after retries")
     return None

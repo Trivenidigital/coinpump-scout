@@ -87,6 +87,11 @@ async def fetch_trending(
 
             results: list[CandidateToken] = []
             for pair_data in pairs:
+                # Skip tokens with short/empty addresses (C2)
+                base_token = pair_data.get("baseToken", {})
+                if len(base_token.get("address", "")) < 8:
+                    continue
+
                 fdv = float(pair_data.get("fdv") or 0)
                 if not (settings.MIN_MARKET_CAP <= fdv <= settings.MAX_MARKET_CAP):
                     continue

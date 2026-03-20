@@ -46,6 +46,10 @@ async def fetch_trending_birdeye(
     items = data.get("data", {}).get("items", [])
 
     for item in items:
+        # Skip tokens with short/empty addresses (C2)
+        if len(item.get("address", "")) < 8:
+            continue
+
         try:
             token = CandidateToken(
                 contract_address=item.get("address", ""),

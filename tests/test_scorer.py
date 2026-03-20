@@ -400,3 +400,37 @@ class TestEdgeCases:
         points, signals = score(token, settings)
         assert "vol_liq_ratio" not in signals  # 8x < 10x threshold
         assert "token_age" in signals
+
+
+class TestRawMax:
+    """CR-001: RAW_MAX must stay in sync with the actual signal point totals."""
+
+    def test_raw_max_matches_signal_sum(self):
+        """CR-001: RAW_MAX must match the actual sum of all max signal points."""
+        signal_max_points = {
+            "vol_liq_ratio": 30,
+            "market_cap_tier": 8,
+            "holder_growth": 25,
+            "token_age": 10,
+            "social_mentions": 15,
+            "buy_pressure": 15,
+            "score_velocity": 10,
+            "unique_buyers": 15,
+            "solana_bonus": 5,
+            "small_txn_ratio": 5,
+            "smart_money_buys": 10,
+            "whale_buys": 5,
+            "liquidity_locked": 10,
+            "volume_spike_5x": 15,  # mutually exclusive with 3x
+            "holder_gini_healthy": 5,
+            "whale_txns_1h": 5,
+            "has_twitter": 3,
+            "has_telegram": 3,
+            "has_github": 2,
+            "on_coingecko": 8,
+            "multi_dex": 5,
+            "has_news": 7,
+            "bullish_news": 8,
+        }
+        expected_max = sum(signal_max_points.values())
+        assert RAW_MAX == expected_max, f"RAW_MAX={RAW_MAX} but signal sum={expected_max}"

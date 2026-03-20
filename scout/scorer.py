@@ -24,7 +24,7 @@ Scoring weights (must always document rationale):
 - on_coingecko: 8 points -- Listed on CoinGecko (strong CEX listing proxy)
 - multi_dex (dex_count >= 2): 5 points -- Traded on multiple DEXs (liquidity depth)
 
-Raw max: 209 points -> normalized to 0-100 scale (BL-016)
+Raw max: 224 points -> normalized to 0-100 scale (BL-016)
 Co-occurrence multiplier applied after normalization (BL-014)
 
 Hard disqualifiers:

@@ -1,5 +1,6 @@
 """Holder data enrichment via Helius (Solana) and Moralis (EVM)."""
 
+import asyncio
 from collections import Counter
 
 import structlog
@@ -20,6 +21,57 @@ MORALIS_CHAIN_MAP = {
 
 HELIUS_RPC = "https://mainnet.helius-rpc.com"
 HELIUS_API = "https://api.helius.xyz/v0"
+
+# Rate-limit guard: max 1 concurrent Helius call with delay between requests
+_helius_semaphore = asyncio.Semaphore(1)
+_HELIUS_DELAY = 0.5  # seconds between requests
+
+# Retry config for rate-limited requests
+_MAX_RETRIES = 4
+_RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
+
+
+async def _helius_request(
+    session: aiohttp.ClientSession,
+    method: str,
+    url: str,
+    **kwargs,
+) -> dict | list | None:
+    """Make a Helius request with rate-limit semaphore and retry on 429."""
+    async with _helius_semaphore:
+        await asyncio.sleep(_HELIUS_DELAY)
+        for attempt in range(_MAX_RETRIES):
+            try:
+                if method == "post":
+                    async with session.post(url, **kwargs) as resp:
+                        if resp.status == 429:
+                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
+                            logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
+                            await asyncio.sleep(wait)
+                            continue
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        if isinstance(data, dict) and "error" in data:
+                            logger.warning("Helius RPC error", error=data["error"])
+                            return None
+                        return data
+                else:
+                    async with session.get(url, **kwargs) as resp:
+                        if resp.status == 429:
+                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
+                            logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
+                            await asyncio.sleep(wait)
+                            continue
+                        if resp.status != 200:
+                            return None
+                        return await resp.json()
+            except aiohttp.ClientError as e:
+                if attempt < _MAX_RETRIES - 1:
+                    await asyncio.sleep(_RETRY_BACKOFF[attempt])
+                    continue
+                raise
+    logger.warning("Helius request failed after retries", url=url)
+    return None
 
 
 async def enrich_holders(
@@ -84,10 +136,10 @@ async def _helius_holder_count(
         "params": {"mint": mint, "limit": 1},
     }
     try:
-        async with session.post(url, json=payload) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-            return data.get("result", {}).get("total", 0)
+        data = await _helius_request(session, "post", url, json=payload)
+        if data is None:
+            return None
+        return data.get("result", {}).get("total", 0)
     except Exception:
         logger.warning("Helius holder lookup failed", contract_address=mint, exc_info=True)
         return None
@@ -105,12 +157,9 @@ async def _helius_txn_analysis(
     result: dict = {}
 
     try:
-        async with session.get(url, params=params) as resp:
-            if resp.status != 200:
-                return result
-            txns = await resp.json()
-            if not txns or not isinstance(txns, list):
-                return result
+        txns = await _helius_request(session, "get", url, params=params)
+        if not txns or not isinstance(txns, list):
+            return result
     except Exception:
         logger.warning("Helius txn analysis failed", contract_address=mint, exc_info=True)
         return result
@@ -170,7 +219,8 @@ async def _helius_deployer_concentration(
     """Check deployer/creator wallet token supply concentration (BL-023).
 
     Uses Helius DAS getAsset to find the creator, then checks their balance
-    as a percentage of total supply.
+    as a percentage of total supply. For pump.fun tokens where authorities
+    is empty, falls back to mint_extensions metadata update_authority.
     """
     url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
 
@@ -182,17 +232,29 @@ async def _helius_deployer_concentration(
         "params": {"id": mint},
     }
     try:
-        async with session.post(url, json=payload) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
+        data = await _helius_request(session, "post", url, json=payload)
+        if data is None:
+            return None
 
         result = data.get("result", {})
         authorities = result.get("authorities", [])
-        if not authorities:
-            return None
 
-        # The first authority is typically the mint authority / deployer
-        deployer = authorities[0].get("address")
+        # Try authorities first
+        deployer = None
+        if authorities:
+            deployer = authorities[0].get("address")
+
+        # Fallback for pump.fun tokens: check creators field
+        if not deployer:
+            creators = result.get("creators", [])
+            if creators:
+                deployer = creators[0].get("address")
+
+        # Fallback: check content metadata update_authority
+        if not deployer:
+            ownership = result.get("ownership", {})
+            deployer = ownership.get("owner")
+
         if not deployer:
             return None
 
@@ -209,9 +271,9 @@ async def _helius_deployer_concentration(
             "method": "getTokenAccounts",
             "params": {"owner": deployer, "mint": mint, "limit": 1},
         }
-        async with session.post(url, json=balance_payload) as resp:
-            resp.raise_for_status()
-            bal_data = await resp.json()
+        bal_data = await _helius_request(session, "post", url, json=balance_payload)
+        if bal_data is None:
+            return None
 
         accounts = bal_data.get("result", {}).get("token_accounts", [])
         if not accounts:

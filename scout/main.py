@@ -56,16 +56,10 @@ async def run_cycle(
     all_candidates = aggregate(list(dex_tokens) + list(gecko_tokens))
     stats["tokens_scanned"] = len(all_candidates)
 
-    # Enrich holders (with concurrency limit to avoid Helius 429s)
-    sem = asyncio.Semaphore(3)
-
-    async def _enrich_with_limit(t: CandidateToken) -> CandidateToken:
-        async with sem:
-            return await enrich_holders(t, session, settings)
-
-    enriched = list(await asyncio.gather(
-        *[_enrich_with_limit(token) for token in all_candidates]
-    ))
+    # Enrich holders sequentially to respect Helius rate limits
+    enriched = []
+    for token in all_candidates:
+        enriched.append(await enrich_holders(token, session, settings))
 
     # BL-020: Compute holder_growth_1h from previous snapshots
     for i, token in enumerate(enriched):

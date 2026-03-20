@@ -33,23 +33,23 @@ async def _get_json(
                     wait = 2 ** attempt
                     logger.warning(
                         "DexScreener returned error, retrying",
-                        url=url, status=resp.status, wait=wait,
+                        status=resp.status, wait=wait,
                         attempt=attempt + 1, retries=retries,
                     )
                     await asyncio.sleep(wait)
                     continue
                 if resp.status != 200:
-                    logger.warning("DexScreener returned error", url=url, status=resp.status)
+                    logger.warning("DexScreener returned error", status=resp.status)
                     return None
                 return await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             wait = 2 ** attempt
             logger.warning(
                 "DexScreener request failed, retrying",
-                url=url, error=str(exc), wait=wait,
+                error=str(exc), wait=wait,
             )
             await asyncio.sleep(wait)
-    logger.warning("DexScreener failed after retries", url=url, retries=retries)
+    logger.warning("DexScreener failed after retries", retries=retries)
     return None
 
 

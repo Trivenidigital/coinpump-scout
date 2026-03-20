@@ -40,7 +40,7 @@ async def _get_json(
                     wait = 2 ** attempt
                     logger.warning(
                         "PumpFun DexScreener returned error, retrying",
-                        url=url, status=resp.status, wait=wait,
+                        status=resp.status, wait=wait,
                         attempt=attempt + 1, retries=retries,
                     )
                     await asyncio.sleep(wait)
@@ -48,7 +48,7 @@ async def _get_json(
                 if resp.status != 200:
                     logger.warning(
                         "PumpFun DexScreener returned error",
-                        url=url, status=resp.status,
+                        status=resp.status,
                     )
                     return None
                 return await resp.json()
@@ -56,10 +56,10 @@ async def _get_json(
             wait = 2 ** attempt
             logger.warning(
                 "PumpFun DexScreener request failed, retrying",
-                url=url, error=str(exc), wait=wait,
+                error=str(exc), wait=wait,
             )
             await asyncio.sleep(wait)
-    logger.warning("PumpFun DexScreener failed after retries", url=url, retries=retries)
+    logger.warning("PumpFun DexScreener failed after retries", retries=retries)
     return None
 
 

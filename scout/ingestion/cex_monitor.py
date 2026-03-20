@@ -18,6 +18,54 @@ _COINGECKO_SEARCH_URL = "https://api.coingecko.com/api/v3/search"
 _coingecko_semaphore = asyncio.Semaphore(1)
 _COINGECKO_DELAY = 2.0
 
+# CoinGecko chain name mapping
+_COINGECKO_CHAIN_MAP = {
+    "solana": "solana",
+    "ethereum": "ethereum",
+    "base": "base",
+}
+
+
+async def _verify_contract(
+    coin_id: str,
+    contract_address: str,
+    chain: str,
+    session: aiohttp.ClientSession,
+) -> bool:
+    """Verify a CoinGecko coin matches our contract address.
+
+    Uses the CoinGecko coins/{id} endpoint to check if the coin's
+    platform addresses include our contract_address.
+    """
+    cg_chain = _COINGECKO_CHAIN_MAP.get(chain)
+    if not cg_chain:
+        # Unknown chain — can't verify, accept the match
+        return True
+
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+    try:
+        async with session.get(
+            url,
+            params={"localization": "false", "tickers": "false",
+                    "market_data": "false", "community_data": "false",
+                    "developer_data": "false"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                # Can't verify — accept the match
+                return True
+            data = await resp.json()
+            platforms = data.get("platforms", {})
+            # Check if our contract address matches any platform
+            for platform, addr in platforms.items():
+                if addr and addr.lower() == contract_address.lower():
+                    return True
+            # No matching address found — this is a different token
+            return False
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        # On error, accept the match (fail open for non-safety check)
+        return True
+
 
 async def check_cex_listing(
     ticker: str,
@@ -31,10 +79,10 @@ async def check_cex_listing(
     results with a matching symbol, the token is considered to be on
     CoinGecko and likely has CEX listings.
 
-    Note: This is a ticker-only match. A scam token with the same ticker as
-    a legitimate project will match. The ``contract_address`` and ``chain``
-    parameters are accepted for future on-chain verification and for logging
-    to aid debugging of false positives.
+    When ``contract_address`` and ``chain`` are provided, the match is
+    verified against CoinGecko's coin detail endpoint to confirm the
+    contract address matches, preventing scam tokens with the same ticker
+    from receiving an undeserved legitimacy boost.
 
     Rate limits: CoinGecko free tier allows ~10-30 req/min. Caller
     should pace requests accordingly.
@@ -42,8 +90,8 @@ async def check_cex_listing(
     Args:
         ticker: The token ticker/symbol to search for (e.g. "BONK").
         session: Shared aiohttp session.
-        contract_address: Token contract address (used for logging only).
-        chain: Token chain identifier (used for logging only).
+        contract_address: Token contract address used to verify the match.
+        chain: Token chain identifier used for contract verification.
 
     Returns:
         {"on_coingecko": bool, "cex_listed": bool}
@@ -79,14 +127,18 @@ async def check_cex_listing(
                     symbol = (coin.get("symbol") or "").upper()
                     if symbol == ticker_upper:
                         coin_id = coin.get("id", "")
-                        if contract_address and coin_id:
-                            logger.debug(
-                                "CoinGecko ticker match (verify with contract address)",
-                                ticker=ticker,
-                                coin_id=coin_id,
-                                contract_address=contract_address,
+                        # If we have contract_address, verify via CoinGecko contract endpoint
+                        if contract_address and chain and coin_id:
+                            verified = await _verify_contract(
+                                coin_id, contract_address, chain, session,
                             )
-                        # Found on CoinGecko -- likely has CEX listings
+                            if not verified:
+                                logger.debug(
+                                    "CoinGecko ticker match but contract mismatch",
+                                    ticker=ticker, coin_id=coin_id,
+                                    contract_address=contract_address,
+                                )
+                                continue  # skip this match, try next
                         return {"on_coingecko": True, "cex_listed": True}
 
                 return defaults

@@ -18,11 +18,11 @@ from scout.models import CandidateToken
 
 logger = structlog.get_logger()
 
-# Rate-limit: 2 seconds between Reddit requests to avoid 403
-_REDDIT_DELAY_SEC = 2.0
+# Rate-limit: 3 seconds between Reddit requests to avoid 403 from VPS IPs
+_REDDIT_DELAY_SEC = 3.0
 
-# Reddit returns JSON when you append .json to search URLs
-_REDDIT_SEARCH_URL = "https://www.reddit.com/search.json"
+# Use old.reddit.com — less aggressive rate limiting on server IPs
+_REDDIT_SEARCH_URL = "https://old.reddit.com/search.json"
 
 # LunarCrush v4 public endpoint
 _LUNARCRUSH_URL = "https://lunarcrush.com/api4/public/coins/{symbol}/v1"
@@ -54,7 +54,7 @@ async def _fetch_reddit_mentions(
     }
     headers = {
         # Reddit requires a non-generic User-Agent or it returns 429
-        "User-Agent": "CoinPumpScout/1.0 (social enrichment bot)",
+        "User-Agent": "Mozilla/5.0 (compatible; CoinPumpScout/1.0; +https://github.com/Trivenidigital)",
     }
 
     try:

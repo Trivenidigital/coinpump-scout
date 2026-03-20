@@ -96,16 +96,6 @@ async def run_cycle(
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
 
-    # Stage 2b: Social enrichment (sequential with delay to avoid rate limits)
-    if settings.SOCIAL_ENRICHMENT_ENABLED:
-        social_enriched = []
-        for token in enriched:
-            social_enriched.append(
-                await enrich_social_sentiment(token, session, settings)
-            )
-            await asyncio.sleep(2.0)  # 2 sec delay to avoid Reddit 403
-        enriched = social_enriched
-
     # Stage 3: Score
     scored = []
     for token in enriched:
@@ -139,6 +129,16 @@ async def run_cycle(
         if points >= settings.MIN_SCORE:
             scored.append((updated, signals))
             stats["candidates_promoted"] += 1
+
+    # Stage 3b: Social enrichment (only for promoted candidates to save API calls)
+    if settings.SOCIAL_ENRICHMENT_ENABLED and scored:
+        enriched_scored = []
+        for token, signals in scored:
+            enriched_token = await enrich_social_sentiment(token, session, settings)
+            await db.upsert_candidate(enriched_token)
+            enriched_scored.append((enriched_token, signals))
+            await asyncio.sleep(3.0)
+        scored = enriched_scored
 
     # Stages 4-5: Gate (MiroFish + conviction)
     for token, signals in scored:

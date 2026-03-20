@@ -210,6 +210,11 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_volume_history_contract
                 ON volume_history (contract_address);
 
+            CREATE INDEX IF NOT EXISTS idx_score_history_contract
+                ON score_history (contract_address, scanned_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_holder_snapshots_contract
+                ON holder_snapshots (contract_address, recorded_at DESC);
+
             CREATE TABLE IF NOT EXISTS outcomes (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
@@ -226,20 +231,25 @@ class Database:
     # ------------------------------------------------------------------
 
     async def upsert_candidate(self, token: CandidateToken) -> None:
-        """INSERT OR REPLACE candidate by contract_address."""
+        """Upsert candidate by contract_address, preserving first_seen_at."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
+
+        update_cols = [c for c in _CANDIDATE_COLUMNS if c != "first_seen_at"]
         placeholders = ", ".join("?" for _ in _CANDIDATE_COLUMNS)
         cols = ", ".join(_CANDIDATE_COLUMNS)
+        update_set = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+
         values = []
         for col in _CANDIDATE_COLUMNS:
             v = getattr(token, col)
-            # Serialize datetimes to ISO strings
             if isinstance(v, datetime):
                 v = v.isoformat()
             values.append(v)
+
         await self._conn.execute(
-            f"INSERT OR REPLACE INTO candidates ({cols}) VALUES ({placeholders})",
+            f"""INSERT INTO candidates ({cols}) VALUES ({placeholders})
+                ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
             values,
         )
         await self._conn.commit()
@@ -476,3 +486,20 @@ class Database:
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def prune_old_data(self, retention_days: int = 30) -> None:
+        """Delete time-series data older than retention_days."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized.")
+        cutoff = f"-{retention_days} days"
+        for table, col in [
+            ("score_history", "scanned_at"),
+            ("holder_snapshots", "recorded_at"),
+            ("volume_history", "recorded_at"),
+            ("signal_snapshots", "scanned_at"),
+        ]:
+            await self._conn.execute(
+                f"DELETE FROM {table} WHERE {col} < datetime('now', ?)",
+                (cutoff,),
+            )
+        await self._conn.commit()

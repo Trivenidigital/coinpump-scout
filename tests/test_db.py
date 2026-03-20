@@ -79,3 +79,52 @@ async def test_get_recent_alerts(db):
     alerts = await db.get_recent_alerts(days=30)
     assert len(alerts) == 1
     assert alerts[0]["contract_address"] == "0xrecent"
+
+
+@pytest.mark.asyncio
+async def test_upsert_preserves_first_seen_at(db):
+    """CR-002: first_seen_at must survive re-upsert."""
+    from datetime import datetime, timezone
+    from scout.models import CandidateToken
+
+    original_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    token = CandidateToken(
+        contract_address="0xPRESERVE123", chain="solana",
+        token_name="Preserve", ticker="PRE",
+        first_seen_at=original_time,
+    )
+    await db.upsert_candidate(token)
+
+    # Upsert again with different data
+    updated = token.model_copy(update={
+        "market_cap_usd": 99999.0,
+        "first_seen_at": datetime.now(timezone.utc),
+    })
+    await db.upsert_candidate(updated)
+
+    cursor = await db._conn.execute(
+        "SELECT first_seen_at FROM candidates WHERE contract_address = ?",
+        ("0xPRESERVE123",),
+    )
+    result = await cursor.fetchone()
+    assert result[0] == original_time.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_prune_old_data(db):
+    from datetime import datetime, timezone
+    await db._conn.execute(
+        "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
+        ("0xOLD_TOKEN12", 50, "2020-01-01T00:00:00"),
+    )
+    await db._conn.execute(
+        "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
+        ("0xNEW_TOKEN12", 60, datetime.now(timezone.utc).isoformat()),
+    )
+    await db._conn.commit()
+
+    await db.prune_old_data(retention_days=30)
+
+    cursor = await db._conn.execute("SELECT COUNT(*) FROM score_history")
+    row = await cursor.fetchone()
+    assert row[0] == 1

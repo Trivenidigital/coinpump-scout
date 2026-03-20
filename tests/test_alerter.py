@@ -22,7 +22,7 @@ def _settings(**overrides) -> Settings:
 
 def _make_token(**overrides) -> CandidateToken:
     defaults = dict(
-        contract_address="0xabc123", chain="solana", token_name="MoonCoin",
+        contract_address="0xabc12345", chain="solana", token_name="MoonCoin",
         ticker="MOON", token_age_days=2, market_cap_usd=75000,
         liquidity_usd=15000, volume_24h_usd=120000,
         holder_count=350, holder_growth_1h=30,

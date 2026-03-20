@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class MiroFishResult(BaseModel):
@@ -11,6 +11,11 @@ class MiroFishResult(BaseModel):
     narrative_score: int
     virality_class: str
     summary: str
+
+    @field_validator("narrative_score")
+    @classmethod
+    def clamp_narrative_score(cls, v: int) -> int:
+        return max(0, min(100, v))
 
 
 class CandidateToken(BaseModel):
@@ -71,6 +76,18 @@ class CandidateToken(BaseModel):
     virality_class: str | None = None
     alerted_at: datetime | None = None
     first_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("contract_address")
+    @classmethod
+    def validate_contract_address(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("contract_address must be at least 8 characters")
+        return v
+
+    @field_validator("top3_wallet_concentration", "deployer_supply_pct", "small_txn_ratio")
+    @classmethod
+    def clamp_ratio_fields(cls, v: float) -> float:
+        return max(0.0, min(1.0, v))
 
     @classmethod
     def from_dexscreener(cls, data: dict) -> "CandidateToken":

@@ -16,7 +16,7 @@ async def db(tmp_path):
 
 def _make_token(**overrides) -> CandidateToken:
     defaults = dict(
-        contract_address="0xtest",
+        contract_address="0xTEST1234",
         chain="solana",
         token_name="Test",
         ticker="TST",
@@ -36,7 +36,7 @@ async def test_upsert_and_retrieve(db):
     await db.upsert_candidate(token)
     candidates = await db.get_candidates_above_score(60)
     assert len(candidates) == 1
-    assert candidates[0]["contract_address"] == "0xtest"
+    assert candidates[0]["contract_address"] == "0xTEST1234"
     assert candidates[0]["quant_score"] == 75
 
 
@@ -51,12 +51,12 @@ async def test_upsert_updates_existing(db):
 
 
 async def test_get_candidates_above_score_filters(db):
-    await db.upsert_candidate(_make_token(contract_address="0xa", quant_score=50))
-    await db.upsert_candidate(_make_token(contract_address="0xb", quant_score=70))
-    await db.upsert_candidate(_make_token(contract_address="0xc", quant_score=None))
+    await db.upsert_candidate(_make_token(contract_address="0xaaaa1234", quant_score=50))
+    await db.upsert_candidate(_make_token(contract_address="0xbbbb1234", quant_score=70))
+    await db.upsert_candidate(_make_token(contract_address="0xcccc1234", quant_score=None))
     results = await db.get_candidates_above_score(60)
     assert len(results) == 1
-    assert results[0]["contract_address"] == "0xb"
+    assert results[0]["contract_address"] == "0xbbbb1234"
 
 
 async def test_log_alert_and_daily_count(db):

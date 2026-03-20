@@ -24,6 +24,7 @@ from scout.ingestion.pumpfun import fetch_pumpfun_graduated
 from scout.ingestion.cryptopanic import enrich_news_sentiment
 from scout.ingestion.social import enrich_social_sentiment
 from scout.models import CandidateToken
+from scout.quality_gate import QualityGate
 from scout.safety import is_safe
 from scout.scorer import score
 
@@ -149,6 +150,17 @@ async def run_cycle(
             await db.upsert_candidate(token)
             enriched_scored.append((token, signals))
         scored = enriched_scored
+
+    # Stage 3c: Quality gate (hard rejection filters before narrative scoring)
+    if scored:
+        quality_gate = QualityGate(settings, db)
+        quality_filtered = []
+        for token, signals in scored:
+            result = await quality_gate.evaluate(token)
+            if result["pass"]:
+                quality_filtered.append((token, signals))
+            # else: already logged by quality gate
+        scored = quality_filtered
 
     # Stages 4-5: Gate (MiroFish + conviction)
     for token, signals in scored:

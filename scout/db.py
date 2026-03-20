@@ -1,6 +1,6 @@
 """Async SQLite database layer for CoinPump Scout."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -505,6 +505,48 @@ class Database:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    # ------------------------------------------------------------------
+    # Volume snapshots (quality gate)
+    # ------------------------------------------------------------------
+
+    async def log_volume_5m(self, contract_address: str, volume: float) -> None:
+        """Store a 5-minute volume snapshot."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
+            (contract_address, volume, now),
+        )
+        await self._conn.commit()
+
+    async def get_previous_volume_5m(self, contract_address: str) -> float | None:
+        """Get the previous volume snapshot for comparison."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cursor = await self._conn.execute(
+            "SELECT volume_24h FROM volume_history WHERE contract_address=? ORDER BY recorded_at DESC LIMIT 1 OFFSET 1",
+            (contract_address,),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else None
+
+    async def get_holder_snapshot_1hr_ago(self, contract_address: str) -> int | None:
+        """Get holder count from approximately 1 hour ago."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        one_hr_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        cursor = await self._conn.execute(
+            "SELECT holder_count FROM holder_snapshots WHERE contract_address=? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
+            (contract_address, one_hr_ago),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else None
+
+    # ------------------------------------------------------------------
+    # Data retention
+    # ------------------------------------------------------------------
+
     async def prune_old_data(self, retention_days: int = 30) -> None:
         """Delete time-series data older than retention_days.
 
@@ -515,7 +557,6 @@ class Database:
         """
         if self._conn is None:
             raise RuntimeError("Database not initialized.")
-        from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         for table, col in [
             ("score_history", "scanned_at"),

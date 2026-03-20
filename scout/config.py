@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     CHAINS: list[str] = ["solana", "base", "ethereum"]
     PUMPFUN_ENABLED: bool = True
 
+    # Quality Gate
+    QUALITY_GATE_ENABLED: bool = True
+    MIN_QUANT_SCORE: int = 1
+    MIN_VOL_ACCELERATION: float = 2.0
+    MIN_UNIQUE_BUYERS: int = 10
+    MAX_TOP3_CONCENTRATION: float = 50.0  # percentage
+    MAX_TOKEN_AGE_HOURS: int = 24
+    MIN_HOLDER_GROWTH_PER_HOUR: int = 5
+
     # Whale detection
     SOL_PRICE_ESTIMATE_USD: float = 150.0
     WHALE_USD_THRESHOLD: float = 1_000.0

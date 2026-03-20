@@ -20,6 +20,7 @@ from scout.ingestion.dexscreener import fetch_trending
 from scout.ingestion.geckoterminal import fetch_trending_pools
 from scout.ingestion.holder_enricher import enrich_holders
 from scout.ingestion.pumpfun import fetch_pumpfun_graduated
+from scout.ingestion.social import enrich_social_sentiment
 from scout.models import CandidateToken
 from scout.safety import is_safe
 from scout.scorer import score
@@ -94,6 +95,16 @@ async def run_cycle(
             if prev is not None:
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
+
+    # Stage 2b: Social enrichment (sequential with delay to avoid rate limits)
+    if settings.SOCIAL_ENRICHMENT_ENABLED:
+        social_enriched = []
+        for token in enriched:
+            social_enriched.append(
+                await enrich_social_sentiment(token, session, settings)
+            )
+            await asyncio.sleep(2.0)  # 2 sec delay to avoid Reddit 403
+        enriched = social_enriched
 
     # Stage 3: Score
     scored = []

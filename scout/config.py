@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     HELIUS_API_KEY: str = ""
     MORALIS_API_KEY: str = ""
 
+    # Social enrichment
+    LUNARCRUSH_API_KEY: str = ""
+    SOCIAL_ENRICHMENT_ENABLED: bool = True
+
     # Database
     DB_PATH: Path = Path("scout.db")
 

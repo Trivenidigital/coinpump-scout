@@ -37,6 +37,7 @@ class CandidateToken(BaseModel):
     top3_wallet_concentration: float = 0.0
     deployer_supply_pct: float = 0.0
     small_txn_ratio: float = 0.0
+    social_score: float = 0.0
 
     # Populated by pipeline stages
     quant_score: int | None = None

@@ -36,7 +36,7 @@ Hard disqualifiers:
 from scout.config import Settings
 from scout.models import CandidateToken
 
-RAW_MAX = 209
+RAW_MAX = 224
 
 
 def score(
@@ -228,6 +228,18 @@ def score(
     if token.multi_dex and token.dex_count >= 2:
         points += 5
         signals.append("multi_dex")
+
+    # Signal 22: CryptoPanic news mentions -- 7 points (narrative momentum)
+    # Token appearing in crypto news indicates growing narrative attention.
+    if token.has_news and token.news_mentions >= 1:
+        points += 7
+        signals.append("has_news")
+
+    # Signal 23: Bullish news sentiment -- 8 points (positive narrative)
+    # Bullish sentiment in news is a strong forward indicator.
+    if token.news_sentiment > 0.3:
+        points += 8
+        signals.append("bullish_news")
 
     # BL-016: Normalize raw sum to 0-100 scale
     normalized = min(100, int(points * 100 / RAW_MAX))

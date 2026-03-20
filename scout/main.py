@@ -21,6 +21,7 @@ from scout.ingestion.geckoterminal import fetch_trending_pools
 from scout.ingestion.holder_enricher import enrich_holders
 from scout.ingestion.onchain_signals import enrich_onchain_signals
 from scout.ingestion.pumpfun import fetch_pumpfun_graduated
+from scout.ingestion.cryptopanic import enrich_news_sentiment
 from scout.ingestion.social import enrich_social_sentiment
 from scout.models import CandidateToken
 from scout.safety import is_safe
@@ -136,14 +137,18 @@ async def run_cycle(
             scored.append((updated, signals))
             stats["candidates_promoted"] += 1
 
-    # Stage 3b: Social enrichment (only for promoted candidates to save API calls)
-    if settings.SOCIAL_ENRICHMENT_ENABLED and scored:
+    # Stage 3b: Social + news enrichment (only for promoted candidates to save API calls)
+    if scored:
         enriched_scored = []
         for token, signals in scored:
-            enriched_token = await enrich_social_sentiment(token, session, settings)
-            await db.upsert_candidate(enriched_token)
-            enriched_scored.append((enriched_token, signals))
-            await asyncio.sleep(3.0)
+            if settings.SOCIAL_ENRICHMENT_ENABLED:
+                token = await enrich_social_sentiment(token, session, settings)
+                await asyncio.sleep(3.0)
+            if settings.CRYPTOPANIC_API_KEY:
+                token = await enrich_news_sentiment(token, session, settings)
+                await asyncio.sleep(1.0)
+            await db.upsert_candidate(token)
+            enriched_scored.append((token, signals))
         scored = enriched_scored
 
     # Stages 4-5: Gate (MiroFish + conviction)

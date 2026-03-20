@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     TWITTER_SCOUT_ENABLED: bool = True
     SOCIALDATA_API_KEY: str = ""
 
+    # CryptoPanic news sentiment
+    CRYPTOPANIC_API_KEY: str = ""
+
     # On-chain signal enrichment
     ONCHAIN_SIGNALS_ENABLED: bool = True
 

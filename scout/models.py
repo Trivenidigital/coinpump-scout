@@ -58,6 +58,11 @@ class CandidateToken(BaseModel):
     multi_dex: bool = False
     dex_count: int = 0
 
+    # CryptoPanic news sentiment
+    news_mentions: int = 0
+    news_sentiment: float = 0.0
+    has_news: bool = False
+
     # Populated by pipeline stages
     quant_score: int | None = None
     narrative_score: int | None = None

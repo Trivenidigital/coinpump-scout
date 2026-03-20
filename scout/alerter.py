@@ -17,7 +17,7 @@ def format_alert_message(token: CandidateToken, signals: list[str]) -> str:
 
     lines.append("⚠️ WARNING: RESEARCH ONLY - Not financial advice")
     lines.append("")
-    lines.append(f"*{token.token_name}* ({token.ticker}) — {token.chain}")
+    lines.append(f"{token.token_name} ({token.ticker}) — {token.chain}")
     lines.append(f"Market Cap: ${token.market_cap_usd:,.0f}")
     lines.append("")
 
@@ -72,7 +72,6 @@ async def send_alert(
     payload = {
         "chat_id": settings.TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "Markdown",
     }
 
     try:

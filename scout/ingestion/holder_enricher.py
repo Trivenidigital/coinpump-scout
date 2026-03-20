@@ -133,7 +133,7 @@ async def _helius_holder_count(
         "jsonrpc": "2.0",
         "id": "holder-enrichment",
         "method": "getTokenAccounts",
-        "params": {"mint": mint, "limit": 1},
+        "params": {"mint": mint, "limit": 1000},
     }
     try:
         data = await _helius_request(session, "post", url, json=payload)

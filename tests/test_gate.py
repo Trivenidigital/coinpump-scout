@@ -141,5 +141,5 @@ async def test_gate_mirofish_fallback_on_timeout(mock_db, mock_session):
     assert conviction == pytest.approx(76.0)
     assert should_alert is True
     mock_fallback.assert_called_once()
-    # Job logged AFTER successful fallback, not before simulation
+    # Job reserved optimistically BEFORE simulation to prevent race conditions
     mock_db.log_mirofish_job.assert_called_once_with("0xTEST1234")

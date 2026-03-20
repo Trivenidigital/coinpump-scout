@@ -67,18 +67,23 @@ async def _get_narrative_score(
     settings: Settings,
     signals_fired: list[str] | None = None,
 ) -> int | None:
-    """Run MiroFish simulation with LLM fallback."""
+    """Run MiroFish simulation with LLM fallback.
+
+    The MiroFish job is reserved optimistically BEFORE any call to prevent
+    race conditions with concurrent cycles checking the daily count.
+    """
     seed = build_seed(token, signals_fired=signals_fired)
+
+    # Reserve the MiroFish job slot BEFORE the call to prevent race conditions
+    await db.log_mirofish_job(token.contract_address)
 
     try:
         result = await simulate(seed, session, settings)
-        await db.log_mirofish_job(token.contract_address)
         return result.narrative_score
     except (MiroFishTimeoutError, MiroFishConnectionError) as e:
         logger.warning("MiroFish failed, falling back to LLM", contract_address=token.contract_address, error=str(e))
         try:
             result = await score_narrative_fallback(seed, settings.ANTHROPIC_API_KEY)
-            await db.log_mirofish_job(token.contract_address)
             return result.narrative_score
         except Exception as e:
             logger.warning("LLM fallback also failed", contract_address=token.contract_address, error=str(e))

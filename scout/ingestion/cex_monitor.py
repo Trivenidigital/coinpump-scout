@@ -18,6 +18,8 @@ _COINGECKO_SEARCH_URL = "https://api.coingecko.com/api/v3/search"
 async def check_cex_listing(
     ticker: str,
     session: aiohttp.ClientSession,
+    contract_address: str = "",
+    chain: str = "",
 ) -> dict:
     """Check if a token is listed on CoinGecko (proxy for CEX listing).
 
@@ -25,12 +27,19 @@ async def check_cex_listing(
     results with a matching symbol, the token is considered to be on
     CoinGecko and likely has CEX listings.
 
+    Note: This is a ticker-only match. A scam token with the same ticker as
+    a legitimate project will match. The ``contract_address`` and ``chain``
+    parameters are accepted for future on-chain verification and for logging
+    to aid debugging of false positives.
+
     Rate limits: CoinGecko free tier allows ~10-30 req/min. Caller
     should pace requests accordingly.
 
     Args:
         ticker: The token ticker/symbol to search for (e.g. "BONK").
         session: Shared aiohttp session.
+        contract_address: Token contract address (used for logging only).
+        chain: Token chain identifier (used for logging only).
 
     Returns:
         {"on_coingecko": bool, "cex_listed": bool}
@@ -63,6 +72,14 @@ async def check_cex_listing(
             for coin in coins:
                 symbol = (coin.get("symbol") or "").upper()
                 if symbol == ticker_upper:
+                    coin_id = coin.get("id", "")
+                    if contract_address and coin_id:
+                        logger.debug(
+                            "CoinGecko ticker match (verify with contract address)",
+                            ticker=ticker,
+                            coin_id=coin_id,
+                            contract_address=contract_address,
+                        )
                     # Found on CoinGecko -- likely has CEX listings
                     return {"on_coingecko": True, "cex_listed": True}
 

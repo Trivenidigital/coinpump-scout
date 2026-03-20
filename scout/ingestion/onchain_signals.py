@@ -469,7 +469,11 @@ async def enrich_onchain_signals(
         updates["dex_count"] = multi_dex_data["dex_count"]
 
     # 7. CEX listing check via CoinGecko (all chains)
-    cex_data = await check_cex_listing(token.ticker, session)
+    cex_data = await check_cex_listing(
+        token.ticker, session,
+        contract_address=token.contract_address,
+        chain=token.chain,
+    )
     updates["on_coingecko"] = cex_data["on_coingecko"]
 
     if updates:

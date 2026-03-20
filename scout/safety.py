@@ -52,8 +52,10 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
         # Also check without lowercasing for Solana addresses
         result = result_map.get(contract_address, {})
     if not result:
-        logger.warning("GoPlus: no result", contract_address=contract_address)
-        return True
+        # No data for this token — unsupported chain or unknown token
+        # Fail closed: we can't verify safety
+        logger.warning("GoPlus: no result for token, failing closed", contract_address=contract_address)
+        return False
 
     if result.get("is_honeypot") == "1":
         return False

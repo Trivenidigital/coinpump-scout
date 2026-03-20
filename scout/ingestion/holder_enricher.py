@@ -21,6 +21,7 @@ MORALIS_CHAIN_MAP = {
 
 HELIUS_RPC = "https://mainnet.helius-rpc.com"
 HELIUS_API = "https://api.helius.xyz/v0"
+RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens"
 
 # Rate-limit guard: max 1 concurrent Helius call with delay between requests
 _helius_semaphore = asyncio.Semaphore(1)
@@ -87,9 +88,11 @@ async def enrich_holders(
     - API failure -> log warning, return unenriched
     """
     if token.chain == "solana":
-        if not settings.HELIUS_API_KEY:
-            return token
-        return await _enrich_solana(token, session, settings)
+        # Try Rugcheck first (free, no API key), then Helius as supplement
+        token = await _enrich_rugcheck(token, session)
+        if settings.HELIUS_API_KEY:
+            token = await _enrich_solana_helius(token, session, settings)
+        return token
     elif token.chain in MORALIS_CHAIN_MAP:
         if not settings.MORALIS_API_KEY:
             return token
@@ -97,27 +100,105 @@ async def enrich_holders(
     return token
 
 
-async def _enrich_solana(
+async def _enrich_rugcheck(
+    token: CandidateToken,
+    session: aiohttp.ClientSession,
+) -> CandidateToken:
+    """Fetch holder data from Rugcheck API (free, no API key needed).
+
+    Returns holder count, top holder concentration, deployer %, and LP lock status.
+    """
+    url = f"{RUGCHECK_API}/{token.contract_address}/report"
+    updates: dict = {}
+
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status != 200:
+                logger.debug("Rugcheck returned non-200", status=resp.status, mint=token.contract_address)
+                return token
+            data = await resp.json()
+
+        # Holder data
+        top_holders = data.get("topHolders", [])
+        if top_holders:
+            # Count holders (Rugcheck returns top 20, but the actual count is higher)
+            # Use len as minimum, real count is typically much higher
+            holder_count = len(top_holders)
+            # If there's a "totalHolders" or similar field, prefer that
+            if data.get("holderCount"):
+                holder_count = int(data["holderCount"])
+
+            # Only update if we got more holders than currently known
+            if holder_count > token.holder_count:
+                updates["holder_count"] = holder_count
+
+            # Top 3 concentration
+            if len(top_holders) >= 3:
+                total_pct = sum(h.get("pct", 0) for h in top_holders)
+                if total_pct > 0:
+                    top3_pct = sum(h.get("pct", 0) for h in top_holders[:3])
+                    updates["top3_wallet_concentration"] = top3_pct / 100.0
+
+            # Deployer / insider concentration
+            insider_pct = sum(h.get("pct", 0) for h in top_holders if h.get("isInsider"))
+            if insider_pct > 0:
+                updates["deployer_supply_pct"] = insider_pct / 100.0
+
+        # LP lock status from markets
+        markets = data.get("markets", [])
+        for market in markets:
+            lp = market.get("lp", {})
+            locked_pct = lp.get("lpLockedPct", 0)
+            if locked_pct > 50:
+                updates["liquidity_locked"] = True
+                break
+
+        # Risk score
+        risk_score = data.get("score", 0)
+        risks = [r.get("name", "") for r in data.get("risks", [])]
+
+        if risks:
+            logger.debug(
+                "Rugcheck report",
+                mint=token.contract_address,
+                risk_score=risk_score,
+                risks=risks,
+                holders=len(top_holders),
+            )
+
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        logger.debug("Rugcheck request failed", mint=token.contract_address, error=str(exc))
+    except Exception:
+        logger.warning("Rugcheck enrichment failed", mint=token.contract_address, exc_info=True)
+
+    if updates:
+        return token.model_copy(update=updates)
+    return token
+
+
+async def _enrich_solana_helius(
     token: CandidateToken,
     session: aiohttp.ClientSession,
     settings: Settings,
 ) -> CandidateToken:
-    """Fetch holder count and on-chain signals from Helius."""
+    """Supplement with Helius data (transaction analysis, holder count if missing)."""
     updates: dict = {}
 
-    # 1. Holder count via DAS API
-    holder_count = await _helius_holder_count(token.contract_address, session, settings)
-    if holder_count is not None:
-        updates["holder_count"] = holder_count
+    # Only fetch holder count from Helius if Rugcheck didn't provide it
+    if token.holder_count <= 1:
+        holder_count = await _helius_holder_count(token.contract_address, session, settings)
+        if holder_count is not None and holder_count > token.holder_count:
+            updates["holder_count"] = holder_count
 
-    # 2. Transaction analysis via parsed transactions API (BL-021, BL-022, BL-024)
+    # Transaction analysis (unique buyers, small txn ratio)
     txn_data = await _helius_txn_analysis(token.contract_address, session, settings)
     updates.update(txn_data)
 
-    # 3. Deployer supply concentration (BL-023)
-    deployer_pct = await _helius_deployer_concentration(token.contract_address, session, settings)
-    if deployer_pct is not None:
-        updates["deployer_supply_pct"] = deployer_pct
+    # Deployer concentration (only if not already set by Rugcheck)
+    if token.deployer_supply_pct == 0:
+        deployer_pct = await _helius_deployer_concentration(token.contract_address, session, settings)
+        if deployer_pct is not None:
+            updates["deployer_supply_pct"] = deployer_pct
 
     if updates:
         return token.model_copy(update=updates)

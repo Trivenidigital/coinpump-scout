@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # On-chain signal enrichment
     ONCHAIN_SIGNALS_ENABLED: bool = True
 
+    # Safety
+    GOPLUS_FAIL_CLOSED: bool = True  # False = fail open on unknown tokens (allows new tokens GoPlus hasn't indexed)
+
     # Database
     DB_PATH: Path = Path("scout.db")
 

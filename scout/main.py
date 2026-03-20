@@ -132,6 +132,8 @@ async def run_cycle(
             disqualified=disqualified,
             disqualify_reason=disqualify_reason,
         )
+        # Batch commit: flush all high-frequency writes for this token in one round-trip.
+        await db.commit()
 
         if points >= settings.MIN_SCORE:
             scored.append((updated, signals))
@@ -163,11 +165,13 @@ async def run_cycle(
                 conviction_score=conviction,
                 alerted=False,
             )
+            await db.commit()
             continue
 
         # Stage 6: Safety check + alert
         token_safe = await is_safe(
-            gated_token.contract_address, gated_token.chain, session
+            gated_token.contract_address, gated_token.chain, session,
+            fail_closed=settings.GOPLUS_FAIL_CLOSED,
         )
         if not token_safe:
             logger.warning(
@@ -181,6 +185,7 @@ async def run_cycle(
                 conviction_score=conviction,
                 alerted=False, safe=False,
             )
+            await db.commit()
             continue
 
         if dry_run:
@@ -205,6 +210,7 @@ async def run_cycle(
             conviction_score=conviction,
             alerted=True, safe=True,
         )
+        await db.commit()
 
     return stats
 

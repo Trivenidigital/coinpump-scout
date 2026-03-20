@@ -19,7 +19,13 @@ CHAIN_ID_MAP = {
 GOPLUS_BASE = "https://api.gopluslabs.io/api/v1/token_security"
 
 
-async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSession) -> bool:
+async def is_safe(
+    contract_address: str,
+    chain: str,
+    session: aiohttp.ClientSession,
+    *,
+    fail_closed: bool = True,
+) -> bool:
     """Check if a token is safe via GoPlus Security API.
 
     Returns True if:
@@ -29,7 +35,9 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
     - sell_tax < 10%
 
     On network/HTTP error: return True (fail open — don't block alerts).
-    On empty result (unknown token/chain): return False (fail closed — can't verify safety).
+    On empty result (unknown token/chain): behaviour is controlled by fail_closed.
+        fail_closed=True (default): return False — can't verify safety, block alert.
+        fail_closed=False: return True — allow alert for tokens GoPlus hasn't indexed yet.
     """
     chain_id = CHAIN_ID_MAP.get(chain, chain)
     url = f"{GOPLUS_BASE}/{chain_id}"
@@ -54,9 +62,8 @@ async def is_safe(contract_address: str, chain: str, session: aiohttp.ClientSess
         result = result_map.get(contract_address, {})
     if not result:
         # No data for this token — unsupported chain or unknown token
-        # Fail closed: we can't verify safety
-        logger.warning("GoPlus: no result for token, failing closed", contract_address=contract_address)
-        return False
+        logger.warning("GoPlus: no result for token", contract_address=contract_address, fail_closed=fail_closed)
+        return not fail_closed  # True if fail_open, False if fail_closed
 
     if result.get("is_honeypot") == "1":
         return False

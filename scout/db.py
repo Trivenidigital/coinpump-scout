@@ -81,6 +81,11 @@ class Database:
             await self._conn.close()
             self._conn = None
 
+    async def commit(self) -> None:
+        """Explicitly commit pending writes (use for batching high-frequency writes)."""
+        if self._conn:
+            await self._conn.commit()
+
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
@@ -252,7 +257,7 @@ class Database:
                 ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
             values,
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_candidates_above_score(self, min_score: int) -> list[dict]:
         """Get candidates with quant_score >= min_score."""
@@ -320,6 +325,20 @@ class Database:
         )
         await self._conn.commit()
 
+    async def rollback_mirofish_job(self, contract_address: str) -> None:
+        """Remove the most recent MiroFish job for a contract (rollback on failure)."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized.")
+        await self._conn.execute(
+            """DELETE FROM mirofish_jobs WHERE id = (
+                SELECT id FROM mirofish_jobs
+                WHERE contract_address = ?
+                ORDER BY created_at DESC LIMIT 1
+            )""",
+            (contract_address,),
+        )
+        await self._conn.commit()
+
     # ------------------------------------------------------------------
     # Score history (BL-013)
     # ------------------------------------------------------------------
@@ -333,7 +352,7 @@ class Database:
             "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
             (contract_address, score, now),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_recent_scores(self, contract_address: str, limit: int = 3) -> list[int]:
         """Get the most recent scores for a token, oldest first."""
@@ -359,7 +378,7 @@ class Database:
             "INSERT INTO holder_snapshots (contract_address, holder_count, recorded_at) VALUES (?, ?, ?)",
             (contract_address, holder_count, now),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_previous_holder_count(self, contract_address: str) -> int | None:
         """Get the most recent holder count snapshot for a token.
@@ -388,7 +407,7 @@ class Database:
             "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
             (contract_address, volume_24h, now),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_avg_volume(self, contract_address: str, lookback: int = 3) -> float | None:
         """Get the average 24h volume from the last *lookback* recordings.
@@ -452,7 +471,7 @@ class Database:
                 now,
             ),
         )
-        await self._conn.commit()
+        # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_signal_snapshots(
         self,

@@ -2,11 +2,13 @@
 
 from scout.models import CandidateToken
 
-# Numeric fields where we prefer the larger (nonzero) value when merging duplicates
+# Numeric fields where we prefer the larger (nonzero) value when merging duplicates.
+# NOTE: token_age_days is intentionally excluded — older age is NOT better for pre-pump
+# detection. Instead we prefer any nonzero age (see special-case logic in aggregate()).
 _PREFER_MAX_FIELDS = [
     "buys_1h", "sells_1h", "volume_24h_usd", "liquidity_usd",
     "holder_count", "holder_growth_1h", "market_cap_usd",
-    "social_mentions_24h", "unique_buyers_1h", "token_age_days",
+    "social_mentions_24h", "unique_buyers_1h",
     "smart_money_buys", "whale_buys", "whale_txns_1h", "dex_count",
     "news_mentions", "social_score",
 ]
@@ -38,10 +40,15 @@ def aggregate(candidates: list[CandidateToken]) -> list[CandidateToken]:
         updates: dict = {}
 
         for field in _PREFER_MAX_FIELDS:
-            new_val = getattr(token, field)
-            old_val = getattr(existing, field)
+            new_val = getattr(token, field, 0) or 0
+            old_val = getattr(existing, field, 0) or 0
             if new_val > old_val:
                 updates[field] = new_val
+
+        # For token_age_days, prefer nonzero (either source's age data is useful);
+        # do NOT prefer max because older age is worse for pre-pump detection.
+        if token.token_age_days > 0 and existing.token_age_days == 0:
+            updates["token_age_days"] = token.token_age_days
 
         for field in _PREFER_TRUE_FIELDS:
             if getattr(token, field) and not getattr(existing, field):

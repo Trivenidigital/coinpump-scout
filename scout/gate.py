@@ -87,4 +87,5 @@ async def _get_narrative_score(
             return result.narrative_score
         except Exception as e:
             logger.warning("LLM fallback also failed", contract_address=token.contract_address, error=str(e))
+            await db.rollback_mirofish_job(token.contract_address)
             raise ScorerError(f"Both MiroFish and LLM fallback failed: {e}") from e

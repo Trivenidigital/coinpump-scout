@@ -44,3 +44,30 @@ def test_aggregate_preserves_all_fields():
     result = aggregate([t])
     assert result[0].quant_score == 75
     assert result[0].holder_count == 500
+
+
+def test_aggregate_prefers_nonzero_fields():
+    """CR-003: Aggregator should merge fields, not last-write-wins."""
+    from scout.models import CandidateToken
+    dex = CandidateToken(
+        contract_address="0xSAMETOKEN12", chain="solana",
+        token_name="Token", ticker="TKN",
+        buys_1h=50, sells_1h=20,
+        volume_24h_usd=100000.0,
+        token_age_days=2.5,
+    )
+    gecko = CandidateToken(
+        contract_address="0xSAMETOKEN12", chain="solana",
+        token_name="Token", ticker="TKN",
+        buys_1h=0, sells_1h=0,
+        volume_24h_usd=95000.0,
+        liquidity_usd=50000.0,
+    )
+    result = aggregate([dex, gecko])
+    assert len(result) == 1
+    merged = result[0]
+    assert merged.buys_1h == 50
+    assert merged.sells_1h == 20
+    assert merged.volume_24h_usd == 100000.0
+    assert merged.liquidity_usd == 50000.0
+    assert merged.token_age_days == 2.5

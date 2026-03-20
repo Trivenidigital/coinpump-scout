@@ -220,6 +220,16 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_holder_snapshots_contract
                 ON holder_snapshots (contract_address, recorded_at DESC);
 
+            CREATE TABLE IF NOT EXISTS vol_gate_snapshots (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_address  TEXT NOT NULL,
+                vol_5min          REAL NOT NULL,
+                recorded_at       TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_vol_gate_snapshots_contract
+                ON vol_gate_snapshots (contract_address, recorded_at DESC);
+
             CREATE TABLE IF NOT EXISTS outcomes (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_address  TEXT NOT NULL,
@@ -509,39 +519,42 @@ class Database:
     # Volume snapshots (quality gate)
     # ------------------------------------------------------------------
 
-    async def log_volume_5m(self, contract_address: str, volume: float) -> None:
-        """Store a 5-minute volume snapshot."""
+    async def log_vol_gate_snapshot(self, contract_address: str, volume: float) -> None:
+        """Store a volume gate snapshot for acceleration tracking."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
         await self._conn.execute(
-            "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
+            "INSERT INTO vol_gate_snapshots (contract_address, vol_5min, recorded_at) VALUES (?, ?, ?)",
             (contract_address, volume, now),
         )
         await self._conn.commit()
 
-    async def get_previous_volume_5m(self, contract_address: str) -> float | None:
-        """Get the previous volume snapshot for comparison."""
+    async def get_prev_vol_gate_snapshot(self, contract_address: str) -> float | None:
+        """Get the previous volume gate snapshot for acceleration comparison."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         cursor = await self._conn.execute(
-            "SELECT volume_24h FROM volume_history WHERE contract_address=? ORDER BY recorded_at DESC LIMIT 1 OFFSET 1",
+            "SELECT vol_5min FROM vol_gate_snapshots WHERE contract_address=? ORDER BY recorded_at DESC LIMIT 1 OFFSET 1",
             (contract_address,),
         )
         row = await cursor.fetchone()
         return float(row[0]) if row else None
 
-    async def get_holder_snapshot_1hr_ago(self, contract_address: str) -> int | None:
-        """Get holder count from approximately 1 hour ago."""
+    async def get_holder_snapshot_older_than(self, contract_address: str, minutes: int = 15) -> tuple[int, str] | None:
+        """Get the most recent holder snapshot older than `minutes` minutes.
+
+        Returns (holder_count, recorded_at) or None if no snapshot exists.
+        """
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
-        one_hr_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
         cursor = await self._conn.execute(
-            "SELECT holder_count FROM holder_snapshots WHERE contract_address=? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
-            (contract_address, one_hr_ago),
+            "SELECT holder_count, recorded_at FROM holder_snapshots WHERE contract_address=? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
+            (contract_address, cutoff),
         )
         row = await cursor.fetchone()
-        return int(row[0]) if row else None
+        return (int(row[0]), row[1]) if row else None
 
     # ------------------------------------------------------------------
     # Data retention
@@ -562,6 +575,7 @@ class Database:
             ("score_history", "scanned_at"),
             ("holder_snapshots", "recorded_at"),
             ("volume_history", "recorded_at"),
+            ("vol_gate_snapshots", "recorded_at"),
             ("signal_snapshots", "scanned_at"),
         ]:
             await self._conn.execute(

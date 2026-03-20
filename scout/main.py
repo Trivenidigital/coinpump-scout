@@ -141,17 +141,7 @@ async def run_cycle(
         # Batch commit: flush all high-frequency writes for this token in one round-trip.
         await db.commit()
 
-    # Stage 3b: Social + news enrichment (only for promoted candidates to save API calls)
-    if scored:
-        enriched_scored = []
-        for token, signals in scored:
-            token = await enrich_social_sentiment(token, session, settings)
-            token = await enrich_news_sentiment(token, session, settings)
-            await db.upsert_candidate(token)
-            enriched_scored.append((token, signals))
-        scored = enriched_scored
-
-    # Stage 3c: Quality gate (hard rejection filters before narrative scoring)
+    # Stage 3b: Quality gate (hard rejection filters before social/news enrichment)
     if scored:
         quality_gate = QualityGate(settings, db)
         quality_filtered = []
@@ -161,6 +151,16 @@ async def run_cycle(
                 quality_filtered.append((token, signals))
             # else: already logged by quality gate
         scored = quality_filtered
+
+    # Stage 3c: Social + news enrichment (only for tokens that passed quality gate)
+    if scored:
+        enriched_scored = []
+        for token, signals in scored:
+            token = await enrich_social_sentiment(token, session, settings)
+            token = await enrich_news_sentiment(token, session, settings)
+            await db.upsert_candidate(token)
+            enriched_scored.append((token, signals))
+        scored = enriched_scored
 
     # Stages 4-5: Gate (MiroFish + conviction)
     for token, signals in scored:

@@ -29,9 +29,9 @@ class QualityGate:
         if not self.settings.QUALITY_GATE_ENABLED:
             return {"pass": True, "reason": None}
 
-        # Gate 1: quant_score > 0
-        if (token.quant_score or 0) <= 0:
-            return self._reject("quant_score_zero", token)
+        # Gate 1: quant_score >= MIN_QUANT_SCORE
+        if (token.quant_score or 0) < self.settings.MIN_QUANT_SCORE:
+            return self._reject("quant_score_below_minimum", token)
 
         # Gate 2: top-3 concentration < MAX_TOP3_CONCENTRATION
         if token.top3_wallet_concentration > (self.settings.MAX_TOP3_CONCENTRATION / 100.0):
@@ -59,19 +59,20 @@ class QualityGate:
         return {"pass": True, "reason": None}
 
     async def _check_volume_acceleration(self, token: CandidateToken) -> float:
-        """Compare current volume to previous snapshot.
+        """Compare current volume snapshot to previous snapshot.
 
-        Returns acceleration ratio (current / previous).
+        Uses volume_24h_usd as the snapshot value — the diff between scans
+        approximates recent volume activity. Returns acceleration ratio.
         """
-        prev_vol = await self.db.get_previous_volume_5m(token.contract_address)
-        current_vol = token.volume_24h_usd  # We use whatever volume is available
+        prev_vol = await self.db.get_prev_vol_gate_snapshot(token.contract_address)
+        current_vol = token.volume_24h_usd
 
         if prev_vol is None or prev_vol <= 0:
             # First time seeing this token, store snapshot and allow through
-            await self.db.log_volume_5m(token.contract_address, current_vol)
+            await self.db.log_vol_gate_snapshot(token.contract_address, current_vol)
             return float('inf')  # Pass on first observation
 
-        await self.db.log_volume_5m(token.contract_address, current_vol)
+        await self.db.log_vol_gate_snapshot(token.contract_address, current_vol)
 
         if current_vol <= 0:
             return 0.0
@@ -85,14 +86,17 @@ class QualityGate:
         if token.holder_count <= 0:
             return 0.0
 
-        prev = await self.db.get_holder_snapshot_1hr_ago(token.contract_address)
+        prev = await self.db.get_holder_snapshot_older_than(token.contract_address, minutes=15)
         if prev is None:
             return None  # No history, allow through
 
-        # Get the time difference
-        hours_elapsed = max(0.1, 1.0)  # Assume ~1 hour between snapshots
-        growth = token.holder_count - prev
-        return growth / hours_elapsed
+        prev_count, recorded_at = prev
+        # Calculate real elapsed time from the snapshot timestamp
+        snapshot_time = datetime.fromisoformat(recorded_at)
+        now = datetime.now(timezone.utc)
+        elapsed_hours = max(0.1, (now - snapshot_time).total_seconds() / 3600)
+        growth = token.holder_count - prev_count
+        return growth / elapsed_hours
 
     def _reject(self, reason: str, token: CandidateToken) -> dict:
         logger.info(

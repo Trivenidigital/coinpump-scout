@@ -15,69 +15,16 @@ import structlog
 
 from scout.config import Settings
 from scout.db import Database
+from scout.ingestion._helius import HELIUS_API, HELIUS_RPC, helius_request, helius_rpc_url
 from scout.ingestion.cex_monitor import check_cex_listing
 from scout.models import CandidateToken
 
 logger = structlog.get_logger()
 
-HELIUS_API = "https://api.helius.xyz/v0"
-HELIUS_RPC = "https://mainnet.helius-rpc.com"
 DEXSCREENER_PAIR_URL = "https://api.dexscreener.com/tokens/v1"
 
 # Known smart-money / alpha wallets (curated set — extend as needed)
 SMART_MONEY_WALLETS: set[str] = set()
-
-# Rate-limit guard: reuse the same pattern as holder_enricher
-_helius_semaphore = asyncio.Semaphore(1)
-_HELIUS_DELAY = 0.5
-_MAX_RETRIES = 4
-_RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
-
-# ------------------------------------------------------------------
-# Helius request helper (mirrors holder_enricher._helius_request)
-# ------------------------------------------------------------------
-
-async def _helius_request(
-    session: aiohttp.ClientSession,
-    method: str,
-    url: str,
-    **kwargs,
-) -> dict | list | None:
-    """Make a Helius request with rate-limit semaphore and retry on 429."""
-    async with _helius_semaphore:
-        await asyncio.sleep(_HELIUS_DELAY)
-        for attempt in range(_MAX_RETRIES):
-            try:
-                if method == "post":
-                    async with session.post(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited (onchain_signals)", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        if isinstance(data, dict) and "error" in data:
-                            logger.warning("Helius RPC error (onchain_signals)", error=data["error"])
-                            return None
-                        return data
-                else:
-                    async with session.get(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited (onchain_signals)", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        if resp.status != 200:
-                            return None
-                        return await resp.json()
-            except aiohttp.ClientError:
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_BACKOFF[attempt])
-                    continue
-                raise
-    logger.warning("Helius request failed after retries (onchain_signals)", url=url)
-    return None
 
 
 # ------------------------------------------------------------------
@@ -109,7 +56,7 @@ async def check_smart_money(
     params = {"api-key": settings.HELIUS_API_KEY, "limit": 50, "type": "SWAP"}
 
     try:
-        txns = await _helius_request(session, "get", url, params=params)
+        txns = await helius_request(session, "get", url, params=params)
         if not txns or not isinstance(txns, list):
             return defaults
     except Exception:
@@ -171,6 +118,7 @@ async def check_smart_money(
 
 async def check_liquidity_lock(
     mint: str,
+    chain: str,
     session: aiohttp.ClientSession,
     settings: Settings,
 ) -> dict:
@@ -179,13 +127,19 @@ async def check_liquidity_lock(
     Uses the DexScreener tokens endpoint to inspect pair data for lock info
     and burned LP tokens.
 
+    Args:
+        mint: The token's contract address.
+        chain: The chain identifier (e.g. "solana", "ethereum", "base").
+        session: Shared aiohttp session.
+        settings: Application settings.
+
     Returns:
         {"liquidity_locked": bool, "lock_source": str | None}
     """
     defaults: dict = {"liquidity_locked": False, "lock_source": None}
 
     # Query DexScreener for pair data (works for any chain)
-    url = f"{DEXSCREENER_PAIR_URL}/solana/{mint}"
+    url = f"{DEXSCREENER_PAIR_URL}/{chain}/{mint}"
     try:
         async with session.get(url) as resp:
             if resp.status != 200:
@@ -287,7 +241,7 @@ async def check_holder_distribution(
     if not settings.HELIUS_API_KEY:
         return defaults
 
-    url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
+    url = helius_rpc_url(settings.HELIUS_API_KEY)
     payload = {
         "jsonrpc": "2.0",
         "id": "holder-distribution",
@@ -296,7 +250,7 @@ async def check_holder_distribution(
     }
 
     try:
-        data = await _helius_request(session, "post", url, json=payload)
+        data = await helius_request(session, "post", url, json=payload)
         if data is None:
             return defaults
 
@@ -353,7 +307,7 @@ async def check_whale_activity(
     params = {"api-key": settings.HELIUS_API_KEY, "limit": 50, "type": "SWAP"}
 
     try:
-        txns = await _helius_request(session, "get", url, params=params)
+        txns = await helius_request(session, "get", url, params=params)
         if not txns or not isinstance(txns, list):
             return defaults
     except Exception:
@@ -486,7 +440,7 @@ async def enrich_onchain_signals(
         updates["whale_buys"] = sm_data["whale_buys"]
 
     # 2. Liquidity lock check
-    lock_data = await check_liquidity_lock(token.contract_address, session, settings)
+    lock_data = await check_liquidity_lock(token.contract_address, token.chain, session, settings)
     updates["liquidity_locked"] = lock_data["liquidity_locked"]
 
     # 3. Volume spike detection

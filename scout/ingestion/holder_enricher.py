@@ -8,6 +8,7 @@ import structlog
 import aiohttp
 
 from scout.config import Settings
+from scout.ingestion._helius import HELIUS_API, HELIUS_RPC, helius_request, helius_rpc_url
 from scout.models import CandidateToken
 
 logger = structlog.get_logger()
@@ -19,60 +20,7 @@ MORALIS_CHAIN_MAP = {
     "polygon": "polygon",
 }
 
-HELIUS_RPC = "https://mainnet.helius-rpc.com"
-HELIUS_API = "https://api.helius.xyz/v0"
 RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens"
-
-# Rate-limit guard: max 1 concurrent Helius call with delay between requests
-_helius_semaphore = asyncio.Semaphore(1)
-_HELIUS_DELAY = 0.5  # seconds between requests
-
-# Retry config for rate-limited requests
-_MAX_RETRIES = 4
-_RETRY_BACKOFF = [2.0, 4.0, 8.0, 12.0]
-
-
-async def _helius_request(
-    session: aiohttp.ClientSession,
-    method: str,
-    url: str,
-    **kwargs,
-) -> dict | list | None:
-    """Make a Helius request with rate-limit semaphore and retry on 429."""
-    async with _helius_semaphore:
-        await asyncio.sleep(_HELIUS_DELAY)
-        for attempt in range(_MAX_RETRIES):
-            try:
-                if method == "post":
-                    async with session.post(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        resp.raise_for_status()
-                        data = await resp.json()
-                        if isinstance(data, dict) and "error" in data:
-                            logger.warning("Helius RPC error", error=data["error"])
-                            return None
-                        return data
-                else:
-                    async with session.get(url, **kwargs) as resp:
-                        if resp.status == 429:
-                            wait = _RETRY_BACKOFF[attempt] if attempt < len(_RETRY_BACKOFF) else 4.0
-                            logger.warning("Helius rate limited, retrying", attempt=attempt + 1, wait=wait)
-                            await asyncio.sleep(wait)
-                            continue
-                        if resp.status != 200:
-                            return None
-                        return await resp.json()
-            except aiohttp.ClientError as e:
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_BACKOFF[attempt])
-                    continue
-                raise
-    logger.warning("Helius request failed after retries", url=url)
-    return None
 
 
 async def enrich_holders(
@@ -214,7 +162,7 @@ async def _helius_holder_count(
     mint: str, session: aiohttp.ClientSession, settings: Settings,
 ) -> int | None:
     """Fetch holder count from Helius DAS API (getTokenAccounts)."""
-    url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
+    url = helius_rpc_url(settings.HELIUS_API_KEY)
     payload = {
         "jsonrpc": "2.0",
         "id": "holder-enrichment",
@@ -222,7 +170,7 @@ async def _helius_holder_count(
         "params": {"mint": mint, "limit": 1000},
     }
     try:
-        data = await _helius_request(session, "post", url, json=payload)
+        data = await helius_request(session, "post", url, json=payload)
         if data is None:
             return None
         return data.get("result", {}).get("total", 0)
@@ -243,7 +191,7 @@ async def _helius_txn_analysis(
     result: dict = {}
 
     try:
-        txns = await _helius_request(session, "get", url, params=params)
+        txns = await helius_request(session, "get", url, params=params)
         if not txns or not isinstance(txns, list):
             return result
     except Exception:
@@ -308,7 +256,7 @@ async def _helius_deployer_concentration(
     as a percentage of total supply. For pump.fun tokens where authorities
     is empty, falls back to mint_extensions metadata update_authority.
     """
-    url = f"{HELIUS_RPC}/?api-key={settings.HELIUS_API_KEY}"
+    url = helius_rpc_url(settings.HELIUS_API_KEY)
 
     # Get token metadata to find creator/authority
     payload = {
@@ -318,7 +266,7 @@ async def _helius_deployer_concentration(
         "params": {"id": mint},
     }
     try:
-        data = await _helius_request(session, "post", url, json=payload)
+        data = await helius_request(session, "post", url, json=payload)
         if data is None:
             return None
 
@@ -357,7 +305,7 @@ async def _helius_deployer_concentration(
             "method": "getTokenAccounts",
             "params": {"owner": deployer, "mint": mint, "limit": 1},
         }
-        bal_data = await _helius_request(session, "post", url, json=balance_payload)
+        bal_data = await helius_request(session, "post", url, json=balance_payload)
         if bal_data is None:
             return None
 

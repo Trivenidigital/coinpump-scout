@@ -11,6 +11,7 @@ import aiohttp
 import structlog
 
 from scout.aggregator import aggregate
+from scout.ingestion.pool_watcher import watch_new_pools, new_pool_queue
 from scout.alerter import send_alert
 from scout.config import Settings
 from scout.db import Database
@@ -201,6 +202,24 @@ async def run_cycle(
             await db.commit()
             continue
 
+        # Dedup: skip if already alerted in the last 24 hours
+        if await db.was_recently_alerted(gated_token.contract_address):
+            logger.info(
+                "Skipping duplicate alert",
+                token=gated_token.contract_address,
+                token_name=gated_token.token_name,
+            )
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle, token=gated_token,
+                quant_score=gated_token.quant_score or 0,
+                signals_fired=signals,
+                narrative_score=gated_token.narrative_score,
+                conviction_score=conviction,
+                alerted=False,
+            )
+            await db.commit()
+            continue
+
         if dry_run:
             logger.info(
                 "DRY RUN: would alert",
@@ -268,12 +287,28 @@ async def main() -> None:
     except (OSError, ValueError):
         pass  # SIGTERM not supported on Windows
 
+    # Start pool watcher background task if enabled
+    pool_watcher_task = None
+    if settings.POOL_WATCHER_ENABLED:
+        pool_watcher_task = asyncio.create_task(watch_new_pools(settings))
+        logger.info("Pool watcher background task started")
+
     cycle_count = 0
     cumulative = {"tokens_scanned": 0, "candidates_promoted": 0, "alerts_fired": 0}
     heartbeat_interval = 5  # cycles between heartbeat logs
     try:
         async with aiohttp.ClientSession() as session:
             while not shutdown_event.is_set():
+                # Drain new pool signatures from WebSocket watcher (infrastructure only)
+                fresh_pools = []
+                while not new_pool_queue.empty():
+                    try:
+                        fresh_pools.append(new_pool_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                if fresh_pools:
+                    logger.info("Fresh pools from WebSocket", count=len(fresh_pools))
+
                 try:
                     stats = await run_cycle(
                         settings, db, session, dry_run=args.dry_run
@@ -308,6 +343,12 @@ async def main() -> None:
                 except asyncio.TimeoutError:
                     pass  # Normal -- interval elapsed
     finally:
+        if pool_watcher_task is not None:
+            pool_watcher_task.cancel()
+            try:
+                await pool_watcher_task
+            except asyncio.CancelledError:
+                pass
         await db.close()
         logger.info("Scanner stopped", cycles_completed=cycle_count)
 

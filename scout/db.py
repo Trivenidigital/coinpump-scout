@@ -311,6 +311,18 @@ class Database:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def was_recently_alerted(self, contract_address: str, hours: int = 24) -> bool:
+        """Check if a token was already alerted within the last `hours` hours."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        cursor = await self._conn.execute(
+            "SELECT 1 FROM alerts WHERE contract_address = ? AND alerted_at >= ? LIMIT 1",
+            (contract_address, cutoff),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
     async def get_recent_alerts(self, days: int = 30) -> list[dict]:
         """Get alerts from the last N days."""
         if self._conn is None:

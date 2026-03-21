@@ -7,7 +7,7 @@ Scoring weights (must always document rationale):
 - token_age (bell curve, peak 1-3 days): 10 points -- Early stage optimal window
 - social_mentions (>50 in 24h): 15 points -- CT discovery signal (optional)
 - buy_pressure (buy_ratio > 65%): 15 points -- Wash trade discriminator (BL-011)
-- score_velocity (rising across 3 scans): 10 points -- Active accumulation (BL-013)
+- score_velocity (10% above avg of prev 2 scans): 10 points -- Active accumulation (BL-013)
 - unique_buyers (high relative to txns): 15 points -- Organic vs bot (BL-021)
 - solana_bonus: 5 points -- Meme premium (BL-030)
 - small_txn_ratio (>60% small txns): 5 points -- Organic distribution (BL-024)
@@ -128,10 +128,12 @@ def score(
             signals.append("buy_pressure")
 
     # Signal 7: Score Velocity -- 10 points (BL-013)
-    # Rising score across consecutive scans indicates active accumulation
-    if previous_scores and len(previous_scores) >= 3:
-        last_3 = previous_scores[-3:]
-        if last_3[0] < last_3[1] < last_3[2]:
+    # Relaxed: last score must be 10% above average of previous 2 scans.
+    # Old rule (strictly rising for 3 scans) fired too rarely in practice.
+    if previous_scores and len(previous_scores) >= 2:
+        recent = previous_scores[-1]
+        avg_prev = sum(previous_scores[-3:-1]) / min(len(previous_scores[-3:-1]), 2)
+        if recent > avg_prev * 1.1:  # 10% above recent average
             points += 10
             signals.append("score_velocity")
 

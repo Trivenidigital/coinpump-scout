@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     # Safety
     GOPLUS_FAIL_CLOSED: bool = True  # False = fail open on unknown tokens (allows new tokens GoPlus hasn't indexed)
 
+    # Solana WebSocket pool watcher
+    SOLANA_WS_URL: str = "wss://api.mainnet-beta.solana.com"
+    POOL_WATCHER_ENABLED: bool = False
+
     # Database
     DB_PATH: Path = Path("scout.db")
 

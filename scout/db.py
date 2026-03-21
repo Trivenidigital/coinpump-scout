@@ -287,15 +287,21 @@ class Database:
     # ------------------------------------------------------------------
 
     async def log_alert(
-        self, contract_address: str, chain: str, conviction_score: float
+        self, contract_address: str, chain: str, conviction_score: float,
+        market_cap_usd: float = 0,
     ) -> None:
-        """Log a fired alert."""
+        """Log a fired alert with market cap snapshot for re-entry logic."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
+        # Try to add mcap column if it doesn't exist (migration)
+        try:
+            await self._conn.execute("ALTER TABLE alerts ADD COLUMN market_cap_usd REAL DEFAULT 0")
+        except Exception:
+            pass
         await self._conn.execute(
-            "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at) VALUES (?, ?, ?, ?)",
-            (contract_address, chain, conviction_score, now),
+            "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
+            (contract_address, chain, conviction_score, now, market_cap_usd),
         )
         await self._conn.commit()
 
@@ -324,17 +330,17 @@ class Database:
         return row is not None
 
     async def get_last_profitable_exit(self, contract_address: str) -> dict | None:
-        """Get the last alert for a token to use as exit price reference.
+        """Get the last alert's mcap snapshot for re-entry dip calculation.
 
-        Returns dict with entry_price_usd (mcap at alert time) or None.
-        Used for re-entry logic: if current mcap dipped 20%+ from alert mcap.
+        Returns dict with entry_price_usd (mcap at ALERT time, not current) or None.
+        Only returns if market_cap_usd > 0 (has actual data).
         """
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         cursor = await self._conn.execute(
-            "SELECT c.market_cap_usd as entry_price_usd "
-            "FROM alerts a JOIN candidates c ON a.contract_address = c.contract_address "
-            "WHERE a.contract_address = ? ORDER BY a.alerted_at DESC LIMIT 1",
+            "SELECT market_cap_usd as entry_price_usd "
+            "FROM alerts WHERE contract_address = ? AND market_cap_usd > 0 "
+            "ORDER BY alerted_at DESC LIMIT 1",
             (contract_address,),
         )
         row = await cursor.fetchone()

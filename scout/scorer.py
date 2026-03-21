@@ -40,7 +40,7 @@ from scout.models import CandidateToken
 # Helius-dependent signals (holder_growth, unique_buyers, smart_money, whale_buys,
 # holder_gini, whale_txns, small_txn_ratio) are excluded from the denominator.
 # Update this if Helius is re-enabled or signals change.
-RAW_MAX = 134
+RAW_MAX = 149
 
 
 def score(

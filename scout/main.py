@@ -202,23 +202,43 @@ async def run_cycle(
             await db.commit()
             continue
 
-        # Dedup: skip if already alerted in the last 24 hours
+        # Dedup: skip if already alerted recently
+        # Exception: high conviction + profitable exit + 20% dip = allow re-entry
         if await db.was_recently_alerted(gated_token.contract_address):
-            logger.info(
-                "Skipping duplicate alert",
-                token=gated_token.contract_address,
-                token_name=gated_token.token_name,
-            )
-            await db.log_signal_snapshot(
-                scan_cycle=scan_cycle, token=gated_token,
-                quant_score=gated_token.quant_score or 0,
-                signals_fired=signals,
-                narrative_score=gated_token.narrative_score,
-                conviction_score=conviction,
-                alerted=False,
-            )
-            await db.commit()
-            continue
+            should_skip = True
+
+            if conviction >= settings.REENTRY_MIN_CONVICTION:
+                last_exit = await db.get_last_profitable_exit(gated_token.contract_address)
+                if last_exit is not None:
+                    exit_mcap = last_exit.get("entry_price_usd", 0)
+                    current_mcap = gated_token.market_cap_usd or 0
+                    if exit_mcap > 0 and current_mcap > 0:
+                        dip_pct = ((exit_mcap - current_mcap) / exit_mcap) * 100
+                        if dip_pct >= settings.REENTRY_DIP_PCT:
+                            should_skip = False
+                            logger.info(
+                                "Re-entry allowed: profitable exit + dip",
+                                token=gated_token.token_name,
+                                conviction=conviction,
+                                dip_pct=f"{dip_pct:.1f}%",
+                            )
+
+            if should_skip:
+                logger.info(
+                    "Skipping duplicate alert",
+                    token=gated_token.contract_address,
+                    token_name=gated_token.token_name,
+                )
+                await db.log_signal_snapshot(
+                    scan_cycle=scan_cycle, token=gated_token,
+                    quant_score=gated_token.quant_score or 0,
+                    signals_fired=signals,
+                    narrative_score=gated_token.narrative_score,
+                    conviction_score=conviction,
+                    alerted=False,
+                )
+                await db.commit()
+                continue
 
         if dry_run:
             logger.info(

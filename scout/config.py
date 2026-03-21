@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str
     DISCORD_WEBHOOK_URL: str = ""
 
+    # Re-entry settings
+    REENTRY_MIN_CONVICTION: float = 40.0  # Min conviction to allow re-entry
+    REENTRY_DIP_PCT: float = 20.0         # Must dip 20% from exit mcap
+
     # Birdeye (optional — Solana token data)
     BIRDEYE_API_KEY: str = ""
 

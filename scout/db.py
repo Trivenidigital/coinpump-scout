@@ -323,6 +323,23 @@ class Database:
         row = await cursor.fetchone()
         return row is not None
 
+    async def get_last_profitable_exit(self, contract_address: str) -> dict | None:
+        """Get the last alert for a token to use as exit price reference.
+
+        Returns dict with entry_price_usd (mcap at alert time) or None.
+        Used for re-entry logic: if current mcap dipped 20%+ from alert mcap.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cursor = await self._conn.execute(
+            "SELECT c.market_cap_usd as entry_price_usd "
+            "FROM alerts a JOIN candidates c ON a.contract_address = c.contract_address "
+            "WHERE a.contract_address = ? ORDER BY a.alerted_at DESC LIMIT 1",
+            (contract_address,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
     async def get_recent_alerts(self, days: int = 30) -> list[dict]:
         """Get alerts from the last N days."""
         if self._conn is None:

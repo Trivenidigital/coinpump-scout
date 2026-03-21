@@ -144,8 +144,12 @@ class Database:
                 contract_address  TEXT NOT NULL,
                 chain             TEXT NOT NULL,
                 conviction_score  REAL NOT NULL,
-                alerted_at        TEXT NOT NULL
+                alerted_at        TEXT NOT NULL,
+                market_cap_usd    REAL DEFAULT 0
             );
+
+            CREATE INDEX IF NOT EXISTS idx_alerts_contract
+                ON alerts (contract_address);
 
             CREATE TABLE IF NOT EXISTS mirofish_jobs (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,11 +298,6 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        # Try to add mcap column if it doesn't exist (migration)
-        try:
-            await self._conn.execute("ALTER TABLE alerts ADD COLUMN market_cap_usd REAL DEFAULT 0")
-        except Exception:
-            pass
         await self._conn.execute(
             "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
             (contract_address, chain, conviction_score, now, market_cap_usd),
@@ -329,7 +328,7 @@ class Database:
         row = await cursor.fetchone()
         return row is not None
 
-    async def get_last_profitable_exit(self, contract_address: str) -> dict | None:
+    async def get_last_alert_mcap(self, contract_address: str) -> dict | None:
         """Get the last alert's mcap snapshot for re-entry dip calculation.
 
         Returns dict with entry_price_usd (mcap at ALERT time, not current) or None.

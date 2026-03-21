@@ -208,7 +208,7 @@ async def run_cycle(
             should_skip = True
 
             if conviction >= settings.REENTRY_MIN_CONVICTION:
-                last_exit = await db.get_last_profitable_exit(gated_token.contract_address)
+                last_exit = await db.get_last_alert_mcap(gated_token.contract_address)
                 if last_exit is not None:
                     exit_mcap = last_exit.get("entry_price_usd", 0)
                     current_mcap = gated_token.market_cap_usd or 0

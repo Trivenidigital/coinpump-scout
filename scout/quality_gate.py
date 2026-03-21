@@ -67,15 +67,17 @@ class QualityGate:
         prev_vol = await self.db.get_prev_vol_gate_snapshot(token.contract_address)
         current_vol = token.volume_24h_usd
 
-        if prev_vol is None or prev_vol <= 0:
-            # First time seeing this token, store snapshot and allow through
-            await self.db.log_vol_gate_snapshot(token.contract_address, current_vol)
-            return float('inf')  # Pass on first observation
-
+        # Always store current snapshot for next comparison
         await self.db.log_vol_gate_snapshot(token.contract_address, current_vol)
 
-        if current_vol <= 0:
+        if prev_vol is None:
+            # First time seeing this token, allow through
+            return float('inf')
+
+        # Avoid division by tiny/zero values producing extreme ratios
+        if prev_vol < 1.0 or current_vol <= 0:
             return 0.0
+
         return current_vol / prev_vol
 
     async def _check_holder_growth(self, token: CandidateToken) -> float | None:

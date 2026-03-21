@@ -36,10 +36,11 @@ Hard disqualifiers:
 from scout.config import Settings
 from scout.models import CandidateToken
 
-# Note: RAW_MAX includes Solana-only signals (35 pts). This intentionally creates
-# a Solana scoring premium — EVM tokens are structurally capped ~15% lower,
-# reflecting this project's focus on Solana meme coin detection.
-RAW_MAX = 224
+# RAW_MAX reflects achievable max without Helius (disabled due to rate limiting).
+# Helius-dependent signals (holder_growth, unique_buyers, smart_money, whale_buys,
+# holder_gini, whale_txns, small_txn_ratio) are excluded from the denominator.
+# Update this if Helius is re-enabled or signals change.
+RAW_MAX = 134
 
 
 def score(

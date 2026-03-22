@@ -648,35 +648,6 @@ class Database:
         oldest = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - oldest).total_seconds()
 
-    async def read_and_mark_injections(self) -> list[dict]:
-        """Read unprocessed smart money injections and mark them processed atomically.
-
-        Uses explicit IDs to avoid marking rows inserted between SELECT and UPDATE.
-        """
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        rows_data = []
-        await self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = await self._conn.execute(
-                "SELECT id, token_mint, wallet_address, tx_signature, source, detected_at "
-                "FROM smart_money_injections WHERE processed = 0"
-            )
-            rows = await cursor.fetchall()
-            if rows:
-                ids = [row["id"] for row in rows]
-                rows_data = [dict(row) for row in rows]
-                placeholders = ",".join("?" for _ in ids)
-                await self._conn.execute(
-                    f"UPDATE smart_money_injections SET processed = 1 WHERE id IN ({placeholders})",
-                    ids,
-                )
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
-        return rows_data
-
     async def cleanup_old_injections(self, days: int = 7) -> int:
         """Delete processed injections older than N days. Returns count deleted."""
         if self._conn is None:

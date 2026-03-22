@@ -33,6 +33,7 @@ from scout.scorer import score
 logger = structlog.get_logger()
 
 _last_injection_cleanup = datetime.min.replace(tzinfo=timezone.utc)
+_last_injection_lag_alert = datetime.min.replace(tzinfo=timezone.utc)
 
 
 async def run_cycle(
@@ -45,7 +46,7 @@ async def run_cycle(
 
     Returns stats dict with tokens_scanned, candidates_promoted, alerts_fired, etc.
     """
-    global _last_injection_cleanup
+    global _last_injection_cleanup, _last_injection_lag_alert
     now_utc = datetime.now(timezone.utc)
     if (now_utc - _last_injection_cleanup).total_seconds() > 3600:
         try:
@@ -112,7 +113,24 @@ async def run_cycle(
     try:
         lag = await db.get_oldest_unprocessed_injection_age_seconds()
         if lag is not None and lag > 300:
-            logger.warning("Smart money injections backing up", oldest_age_min=int(lag / 60))
+            oldest_min = int(lag / 60)
+            logger.warning("Smart money injections backing up", oldest_age_min=oldest_min)
+            if (now_utc - _last_injection_lag_alert).total_seconds() > 3600:
+                try:
+                    telegram_url = (
+                        f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+                    )
+                    payload = {
+                        "chat_id": settings.TELEGRAM_CHAT_ID,
+                        "text": f"Smart money injections backing up — oldest: {oldest_min}m ago",
+                    }
+                    async with session.post(telegram_url, json=payload) as resp:
+                        if resp.status != 200:
+                            body = await resp.text()
+                            logger.warning("Lag alert Telegram delivery failed", status=resp.status, body=body)
+                    _last_injection_lag_alert = now_utc
+                except Exception as e:
+                    logger.warning("Lag alert Telegram delivery error", error=str(e))
     except Exception:
         pass
 

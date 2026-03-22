@@ -192,7 +192,7 @@ async def test_smart_money_injections_table_exists(tmp_path):
 
 @pytest.mark.asyncio
 async def test_read_unprocessed_injections(tmp_path):
-    """Should read unprocessed injections and mark them as processed atomically."""
+    """Should read unprocessed injections and mark them as processed via the new API."""
     from scout.db import Database
     db = Database(tmp_path / "test.db")
     await db.initialize()
@@ -205,10 +205,12 @@ async def test_read_unprocessed_injections(tmp_path):
         ("mint1", "wallet2", "tx2"),
     )
     await db._conn.commit()
-    injections = await db.read_and_mark_injections()
+    injections = await db.get_unprocessed_injections()
     assert len(injections) == 2
     assert injections[0]["token_mint"] == "mint1"
-    second_read = await db.read_and_mark_injections()
+    ids = [row["id"] for row in injections]
+    await db.mark_injections_processed(ids)
+    second_read = await db.get_unprocessed_injections()
     assert len(second_read) == 0
     await db.close()
 

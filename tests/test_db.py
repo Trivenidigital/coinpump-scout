@@ -177,6 +177,84 @@ async def test_wal_mode_enabled(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_smart_money_injections_table_exists(tmp_path):
+    """smart_money_injections table should be created on init."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    cursor = await db._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='smart_money_injections'"
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_read_unprocessed_injections(tmp_path):
+    """Should read unprocessed injections and mark them as processed atomically."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet2", "tx2"),
+    )
+    await db._conn.commit()
+    injections = await db.read_and_mark_injections()
+    assert len(injections) == 2
+    assert injections[0]["token_mint"] == "mint1"
+    second_read = await db.read_and_mark_injections()
+    assert len(second_read) == 0
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_injection_dedup_on_tx_signature(tmp_path):
+    """Duplicate (token_mint, tx_signature) should be ignored."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT OR IGNORE INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.execute(
+        "INSERT OR IGNORE INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.commit()
+    cursor = await db._conn.execute("SELECT COUNT(*) FROM smart_money_injections")
+    row = await cursor.fetchone()
+    assert row[0] == 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_old_injections(tmp_path):
+    """Processed injections older than 7 days should be cleaned up."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature, processed, detected_at) VALUES (?, ?, ?, 1, datetime('now', '-8 days'))",
+        ("old_mint", "wallet1", "old_tx"),
+    )
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature, processed) VALUES (?, ?, ?, 1)",
+        ("new_mint", "wallet1", "new_tx"),
+    )
+    await db._conn.commit()
+    deleted = await db.cleanup_old_injections()
+    assert deleted == 1
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_prune_old_data(db):
     from datetime import datetime, timezone
     await db._conn.execute(

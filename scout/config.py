@@ -19,13 +19,32 @@ class Settings(BaseSettings):
     CONVICTION_THRESHOLD: int = 70
     QUANT_WEIGHT: float = 0.6
     NARRATIVE_WEIGHT: float = 0.4
+    MAX_CANDIDATES_PER_CYCLE: int = 50
 
     # Token filters
     MIN_MARKET_CAP: float = 10_000
     MAX_MARKET_CAP: float = 500_000
     MAX_TOKEN_AGE_DAYS: int = 7
     MIN_VOL_LIQ_RATIO: float = 5.0
+    MIN_LIQUIDITY_USD: float = 15_000
     CHAINS: list[str] = ["solana", "base", "ethereum"]
+    PUMPFUN_ENABLED: bool = True
+
+    # Quality Gate
+    QUALITY_GATE_ENABLED: bool = True
+    MIN_QUANT_SCORE: int = 1
+    MIN_VOL_ACCELERATION: float = 2.0
+    MIN_UNIQUE_BUYERS: int = 10
+    MAX_TOP3_CONCENTRATION: float = 40.0  # percentage
+    MAX_TOKEN_AGE_HOURS: int = 24
+    MIN_HOLDER_GROWTH_PER_HOUR: int = 5
+
+    # Whale detection
+    SOL_PRICE_ESTIMATE_USD: float = 150.0
+    WHALE_USD_THRESHOLD: float = 1_000.0
+
+    # Well-known addresses (Solana)
+    USDC_MINT_SOLANA: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
     # MiroFish
     MIROFISH_URL: str = "http://localhost:5001"
@@ -37,9 +56,37 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str
     DISCORD_WEBHOOK_URL: str = ""
 
+    # Re-entry settings
+    REENTRY_MIN_CONVICTION: float = 40.0  # Min conviction to allow re-entry
+    REENTRY_DIP_PCT: float = 20.0         # Must dip 20% from exit mcap
+
+    # Birdeye (optional — Solana token data)
+    BIRDEYE_API_KEY: str = ""
+
     # Holder enrichment (optional)
     HELIUS_API_KEY: str = ""
     MORALIS_API_KEY: str = ""
+
+    # Social enrichment
+    LUNARCRUSH_API_KEY: str = ""
+    SOCIAL_ENRICHMENT_ENABLED: bool = True
+    TWITTER_SCOUT_ENABLED: bool = True
+    SOCIALDATA_API_KEY: str = ""
+
+    # CryptoPanic news sentiment
+    CRYPTOPANIC_API_KEY: str = ""
+
+    # On-chain signal enrichment
+    ONCHAIN_SIGNALS_ENABLED: bool = True
+    SMART_MONEY_WALLETS: str = ""  # Comma-separated tracked wallet addresses
+    SMART_MONEY_BOOST_CAP: int = 80  # Max total smart money score boost
+
+    # Safety
+    GOPLUS_FAIL_CLOSED: bool = True  # False = fail open on unknown tokens (allows new tokens GoPlus hasn't indexed)
+
+    # Solana WebSocket pool watcher
+    SOLANA_WS_URL: str = "wss://api.mainnet-beta.solana.com"
+    POOL_WATCHER_ENABLED: bool = False
 
     # Database
     DB_PATH: Path = Path("scout.db")

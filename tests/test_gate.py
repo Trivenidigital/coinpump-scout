@@ -21,7 +21,7 @@ def _settings(**overrides) -> Settings:
 
 def _make_token(**overrides) -> CandidateToken:
     defaults = dict(
-        contract_address="0xtest", chain="solana", token_name="Test",
+        contract_address="0xTEST1234", chain="solana", token_name="Test",
         ticker="TST", token_age_days=1.0, market_cap_usd=50000.0,
         liquidity_usd=10000.0, volume_24h_usd=80000.0,
         holder_count=100, holder_growth_1h=25,
@@ -141,5 +141,5 @@ async def test_gate_mirofish_fallback_on_timeout(mock_db, mock_session):
     assert conviction == pytest.approx(76.0)
     assert should_alert is True
     mock_fallback.assert_called_once()
-    # Job logged AFTER successful fallback, not before simulation
-    mock_db.log_mirofish_job.assert_called_once_with("0xtest")
+    # Job reserved optimistically BEFORE simulation to prevent race conditions
+    mock_db.log_mirofish_job.assert_called_once_with("0xTEST1234")

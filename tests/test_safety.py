@@ -3,6 +3,7 @@
 import pytest
 import aiohttp
 from aioresponses import aioresponses
+from unittest.mock import AsyncMock, MagicMock
 
 from scout.safety import is_safe
 
@@ -95,4 +96,40 @@ async def test_solana_chain_mapping(mock_aiohttp):
     async with aiohttp.ClientSession() as session:
         result = await is_safe("0xtest", "solana", session)
 
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_token_returns_false():
+    """CR-009: Unknown tokens (empty GoPlus result) should fail closed by default."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"code": 1, "result": {}})
+
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_resp)
+    cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = cm
+
+    result = await is_safe("0xUNKNOWN12345678", "solana", mock_session)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_unknown_token_fail_open():
+    """When fail_closed=False, unknown tokens (not in GoPlus) should pass safety."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"code": 1, "result": {}})
+
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_resp)
+    cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = cm
+
+    result = await is_safe("0xUNKNOWN12345678", "solana", mock_session, fail_closed=False)
     assert result is True

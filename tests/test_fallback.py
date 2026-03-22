@@ -1,7 +1,7 @@
 """Tests for Claude API fallback narrative scorer."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -30,6 +30,13 @@ def _mock_claude_response(content: str):
     return msg
 
 
+def _make_mock_client(content: str) -> AsyncMock:
+    """Create a mock AsyncAnthropic client."""
+    mock_client = AsyncMock()
+    mock_client.messages.create.return_value = _mock_claude_response(content)
+    return mock_client
+
+
 @pytest.mark.asyncio
 async def test_fallback_parses_json_response():
     response_json = json.dumps({
@@ -37,13 +44,9 @@ async def test_fallback_parses_json_response():
         "virality_class": "Medium",
         "summary": "Moderate viral potential.",
     })
+    mock_client = _make_mock_client(response_json)
 
-    with patch("scout.mirofish.fallback.anthropic") as mock_anthropic:
-        mock_client = AsyncMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_claude_response(response_json)
-
-        result = await score_narrative_fallback(SAMPLE_SEED, "test-api-key")
+    result = await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
 
     assert isinstance(result, MiroFishResult)
     assert result.narrative_score == 65
@@ -55,13 +58,9 @@ async def test_fallback_parses_json_response():
 async def test_fallback_extracts_json_from_markdown():
     """Claude sometimes wraps JSON in ```json code blocks."""
     content = '```json\n{"narrative_score": 80, "virality_class": "High", "summary": "Very viral."}\n```'
+    mock_client = _make_mock_client(content)
 
-    with patch("scout.mirofish.fallback.anthropic") as mock_anthropic:
-        mock_client = AsyncMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_claude_response(content)
-
-        result = await score_narrative_fallback(SAMPLE_SEED, "test-api-key")
+    result = await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
 
     assert result.narrative_score == 80
     assert result.virality_class == "High"
@@ -74,14 +73,55 @@ async def test_fallback_uses_correct_model():
         "virality_class": "Low",
         "summary": "Weak narrative.",
     })
+    mock_client = _make_mock_client(response_json)
 
-    with patch("scout.mirofish.fallback.anthropic") as mock_anthropic:
-        mock_client = AsyncMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_claude_response(response_json)
-
-        await score_narrative_fallback(SAMPLE_SEED, "test-api-key")
+    await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
 
     call_kwargs = mock_client.messages.create.call_args.kwargs
     assert call_kwargs["model"] == "claude-haiku-4-5"
     assert call_kwargs["max_tokens"] == 300
+
+
+@pytest.mark.asyncio
+async def test_fallback_sends_system_and_user_messages():
+    response_json = json.dumps({
+        "narrative_score": 70,
+        "virality_class": "High",
+        "summary": "Strong narrative.",
+    })
+    mock_client = _make_mock_client(response_json)
+
+    await score_narrative_fallback(SAMPLE_SEED, "test-api-key", client=mock_client)
+
+    call_kwargs = mock_client.messages.create.call_args.kwargs
+    assert call_kwargs["system"] is not None
+    assert call_kwargs["messages"][0]["role"] == "user"
+    assert call_kwargs["messages"][0]["content"] == SAMPLE_SEED["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_empty_content_raises_scorer_error():
+    """CR-006: Empty content blocks should raise ScorerError."""
+    from scout.exceptions import ScorerError
+    mock_client = AsyncMock()
+    mock_message = MagicMock()
+    mock_message.content = []
+    mock_client.messages.create.return_value = mock_message
+
+    with pytest.raises(ScorerError, match="empty response"):
+        await score_narrative_fallback({"prompt": "test"}, "fake-key", client=mock_client)
+
+
+@pytest.mark.asyncio
+async def test_fallback_malformed_json_raises_scorer_error():
+    """CR-006: Malformed JSON should raise ScorerError."""
+    from scout.exceptions import ScorerError
+    mock_client = AsyncMock()
+    mock_block = MagicMock()
+    mock_block.text = "This is not JSON at all."
+    mock_message = MagicMock()
+    mock_message.content = [mock_block]
+    mock_client.messages.create.return_value = mock_message
+
+    with pytest.raises(ScorerError):
+        await score_narrative_fallback({"prompt": "test"}, "fake-key", client=mock_client)

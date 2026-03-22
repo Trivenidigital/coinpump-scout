@@ -27,7 +27,7 @@ DEXSCREENER_SEARCH_URL = "https://api.dexscreener.com/latest/dex/search"
 DEXSCREENER_TRENDING_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
 
 SAMPLE_PAIR = {
-    "baseToken": {"address": "0xabc", "name": "TestCoin", "symbol": "TC"},
+    "baseToken": {"address": "0xabc12345", "name": "TestCoin", "symbol": "TC"},
     "chainId": "solana",
     "pairCreatedAt": 1710720000000,
     "fdv": 50000,
@@ -50,18 +50,18 @@ async def test_fetch_trending_returns_candidates(mock_aiohttp):
         tokens = await fetch_trending(session, settings)
 
     assert len(tokens) >= 1
-    assert tokens[0].contract_address == "0xabc"
+    assert tokens[0].contract_address == "0xabc12345"
     assert tokens[0].chain == "solana"
 
 
 async def test_fetch_trending_filters_by_market_cap(mock_aiohttp):
     too_big = {**SAMPLE_PAIR, "fdv": 1_000_000}
     mock_aiohttp.get(DEXSCREENER_TRENDING_URL, payload=[
-        {"tokenAddress": "0xbig", "chainId": "solana"},
+        {"tokenAddress": "0xbig12345", "chainId": "solana"},
     ])
     mock_aiohttp.get(
-        "https://api.dexscreener.com/tokens/v1/solana/0xbig",
-        payload=[{**too_big, "baseToken": {"address": "0xbig", "name": "Big", "symbol": "BIG"}}],
+        "https://api.dexscreener.com/tokens/v1/solana/0xbig12345",
+        payload=[{**too_big, "baseToken": {"address": "0xbig12345", "name": "Big", "symbol": "BIG"}}],
     )
 
     settings = _settings()
@@ -84,11 +84,11 @@ async def test_fetch_trending_handles_empty_response(mock_aiohttp):
 async def test_fetch_trending_handles_429_with_backoff(mock_aiohttp):
     mock_aiohttp.get(DEXSCREENER_TRENDING_URL, status=429)
     mock_aiohttp.get(DEXSCREENER_TRENDING_URL, payload=[
-        {"tokenAddress": "0xretry", "chainId": "solana"},
+        {"tokenAddress": "0xretry12", "chainId": "solana"},
     ])
     mock_aiohttp.get(
-        "https://api.dexscreener.com/tokens/v1/solana/0xretry",
-        payload=[{**SAMPLE_PAIR, "baseToken": {"address": "0xretry", "name": "Retry", "symbol": "RTR"}}],
+        "https://api.dexscreener.com/tokens/v1/solana/0xretry12",
+        payload=[{**SAMPLE_PAIR, "baseToken": {"address": "0xretry12", "name": "Retry", "symbol": "RTR"}}],
     )
 
     settings = _settings()

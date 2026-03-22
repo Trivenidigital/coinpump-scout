@@ -27,6 +27,10 @@ def mock_db():
     db.log_alert = AsyncMock()
     db.get_daily_mirofish_count = AsyncMock(return_value=0)
     db.get_daily_alert_count = AsyncMock(return_value=0)
+    db.get_recent_scores = AsyncMock(return_value=[])
+    db.log_score = AsyncMock()
+    db.get_previous_holder_count = AsyncMock(return_value=None)
+    db.log_holder_snapshot = AsyncMock()
     return db
 
 
@@ -40,7 +44,7 @@ async def test_run_cycle_dry_run(mock_db, mock_session, mock_settings):
     from scout.models import CandidateToken
 
     token = CandidateToken(
-        contract_address="0xtest", chain="solana", token_name="Test",
+        contract_address="0xTEST1234", chain="solana", token_name="Test",
         ticker="TST", token_age_days=1, market_cap_usd=50000,
         liquidity_usd=10000, volume_24h_usd=80000,
         holder_count=100, holder_growth_1h=25,
@@ -67,7 +71,7 @@ async def test_run_cycle_sends_alert(mock_db, mock_session, mock_settings):
     from scout.models import CandidateToken
 
     token = CandidateToken(
-        contract_address="0xtest", chain="solana", token_name="Test",
+        contract_address="0xTEST1234", chain="solana", token_name="Test",
         ticker="TST", token_age_days=1, market_cap_usd=50000,
         liquidity_usd=10000, volume_24h_usd=80000,
         holder_count=100, holder_growth_1h=25,
@@ -93,7 +97,7 @@ async def test_run_cycle_skips_unsafe_token(mock_db, mock_session, mock_settings
     from scout.models import CandidateToken
 
     token = CandidateToken(
-        contract_address="0xrug", chain="solana", token_name="Rug",
+        contract_address="0xRUG12345", chain="solana", token_name="Rug",
         ticker="RUG", token_age_days=1, market_cap_usd=50000,
         liquidity_usd=10000, volume_24h_usd=80000,
         holder_count=100, holder_growth_1h=25,

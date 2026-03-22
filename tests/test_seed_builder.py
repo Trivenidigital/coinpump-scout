@@ -8,7 +8,7 @@ from scout.models import CandidateToken
 
 def _make_token(**overrides) -> CandidateToken:
     defaults = dict(
-        contract_address="0xtest", chain="solana", token_name="TestCoin",
+        contract_address="0xTEST1234", chain="solana", token_name="TestCoin",
         ticker="TST", token_age_days=2.5, market_cap_usd=50000.0,
         liquidity_usd=10000.0, volume_24h_usd=80000.0,
         holder_count=300, holder_growth_1h=25,
@@ -31,6 +31,9 @@ def test_build_seed_returns_required_keys():
     assert "concept_description" in seed
     assert "social_snippets" in seed
     assert "prompt" in seed
+    # BL-015: new fields
+    assert "signal_confidence" in seed
+    assert "signals_fired" in seed
 
 
 def test_build_seed_values():
@@ -65,3 +68,24 @@ def test_build_seed_no_social_mentions():
     token = _make_token(social_mentions_24h=0)
     seed = build_seed(token)
     assert seed["social_snippets"] == "None detected"
+
+
+def test_build_seed_with_signals():
+    """BL-015: Seed includes signal confidence when signals are provided."""
+    token = _make_token()
+    signals = ["vol_liq_ratio", "holder_growth", "market_cap_range"]
+    seed = build_seed(token, signals_fired=signals)
+
+    assert seed["signal_confidence"] == "HIGH"
+    assert seed["signals_fired"] == signals
+    assert "Signal confidence: HIGH" in seed["prompt"]
+    assert "3 signals firing" in seed["prompt"]
+
+
+def test_build_seed_without_signals():
+    """BL-015: Seed defaults to LOW confidence with no signals."""
+    token = _make_token()
+    seed = build_seed(token)
+
+    assert seed["signal_confidence"] == "LOW"
+    assert seed["signals_fired"] == []

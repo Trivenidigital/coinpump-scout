@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class MiroFishResult(BaseModel):
@@ -11,6 +11,11 @@ class MiroFishResult(BaseModel):
     narrative_score: int
     virality_class: str
     summary: str
+
+    @field_validator("narrative_score")
+    @classmethod
+    def clamp_narrative_score(cls, v: int) -> int:
+        return max(0, min(100, v))
 
 
 class CandidateToken(BaseModel):
@@ -31,6 +36,37 @@ class CandidateToken(BaseModel):
     holder_count: int = 0
     holder_growth_1h: int = 0
     social_mentions_24h: int = 0
+    buys_1h: int = 0
+    sells_1h: int = 0
+    unique_buyers_1h: int = 0
+    top3_wallet_concentration: float = 0.0
+    deployer_supply_pct: float = 0.0
+    small_txn_ratio: float = 0.0
+    social_score: float = 0.0
+
+    # On-chain signal enrichment fields
+    smart_money_buys: int = 0
+    whale_buys: int = 0
+    liquidity_locked: bool = False
+    volume_spike: bool = False
+    volume_spike_ratio: float = 0.0
+    holder_gini_healthy: bool = False
+    whale_txns_1h: int = 0
+
+    # Social presence fields
+    has_twitter: bool = False
+    has_telegram: bool = False
+    has_github: bool = False
+
+    # CEX listing and multi-DEX fields
+    on_coingecko: bool = False
+    multi_dex: bool = False
+    dex_count: int = 0
+
+    # CryptoPanic news sentiment
+    news_mentions: int = 0
+    news_sentiment: float = 0.0
+    has_news: bool = False
 
     # Populated by pipeline stages
     quant_score: int | None = None
@@ -40,6 +76,18 @@ class CandidateToken(BaseModel):
     virality_class: str | None = None
     alerted_at: datetime | None = None
     first_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("contract_address")
+    @classmethod
+    def validate_contract_address(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("contract_address must be at least 8 characters")
+        return v
+
+    @field_validator("top3_wallet_concentration", "deployer_supply_pct", "small_txn_ratio")
+    @classmethod
+    def clamp_ratio_fields(cls, v: float) -> float:
+        return max(0.0, min(1.0, v))
 
     @classmethod
     def from_dexscreener(cls, data: dict) -> "CandidateToken":
@@ -54,6 +102,10 @@ class CandidateToken(BaseModel):
             age_delta = datetime.now(timezone.utc) - created_at
             token_age_days = age_delta.total_seconds() / 86400
 
+        txns = data.get("txns", {}).get("h1", {})
+        buys_1h = int(txns.get("buys") or 0)
+        sells_1h = int(txns.get("sells") or 0)
+
         return cls(
             contract_address=base_token.get("address", ""),
             chain=data.get("chainId", ""),
@@ -65,6 +117,8 @@ class CandidateToken(BaseModel):
             volume_24h_usd=float((data.get("volume") or {}).get("h24") or 0),
             holder_count=0,
             holder_growth_1h=0,
+            buys_1h=buys_1h,
+            sells_1h=sells_1h,
         )
 
     @classmethod

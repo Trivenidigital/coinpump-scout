@@ -6,7 +6,7 @@ import aiohttp
 
 from scout.config import Settings
 from scout.db import Database
-from scout.exceptions import MiroFishConnectionError, MiroFishTimeoutError
+from scout.exceptions import MiroFishConnectionError, MiroFishTimeoutError, ScorerError
 from scout.mirofish.client import simulate
 from scout.mirofish.fallback import score_narrative_fallback
 from scout.mirofish.seed_builder import build_seed
@@ -20,6 +20,7 @@ async def evaluate(
     db: Database,
     session: aiohttp.ClientSession,
     settings: Settings,
+    signals_fired: list[str] | None = None,
 ) -> tuple[bool, float, CandidateToken]:
     """Evaluate a candidate token through the conviction gate.
 
@@ -33,7 +34,14 @@ async def evaluate(
     if quant_score >= settings.MIN_SCORE:
         daily_count = await db.get_daily_mirofish_count()
         if daily_count < settings.MAX_MIROFISH_JOBS_PER_DAY:
-            narrative_score = await _get_narrative_score(token, session, db, settings)
+            try:
+                narrative_score = await _get_narrative_score(
+                    token, session, db, settings, signals_fired=signals_fired,
+                )
+            except ScorerError as e:
+                logger.warning("Narrative scoring failed, using quant-only",
+                               contract_address=token.contract_address, error=str(e))
+                narrative_score = None
 
     # Compute conviction score
     if narrative_score is not None:
@@ -57,20 +65,27 @@ async def _get_narrative_score(
     session: aiohttp.ClientSession,
     db: Database,
     settings: Settings,
+    signals_fired: list[str] | None = None,
 ) -> int | None:
-    """Run MiroFish simulation with Claude fallback."""
-    seed = build_seed(token)
+    """Run MiroFish simulation with LLM fallback.
+
+    The MiroFish job is reserved optimistically BEFORE any call to prevent
+    race conditions with concurrent cycles checking the daily count.
+    """
+    seed = build_seed(token, signals_fired=signals_fired)
+
+    # Reserve the MiroFish job slot BEFORE the call to prevent race conditions
+    job_id = await db.log_mirofish_job(token.contract_address)
 
     try:
         result = await simulate(seed, session, settings)
-        await db.log_mirofish_job(token.contract_address)
         return result.narrative_score
     except (MiroFishTimeoutError, MiroFishConnectionError) as e:
-        logger.warning("MiroFish failed, falling back to Claude", contract_address=token.contract_address, error=str(e))
+        logger.warning("MiroFish failed, falling back to LLM", contract_address=token.contract_address, error=str(e))
         try:
             result = await score_narrative_fallback(seed, settings.ANTHROPIC_API_KEY)
-            await db.log_mirofish_job(token.contract_address)
             return result.narrative_score
         except Exception as e:
-            logger.error("Claude fallback also failed", contract_address=token.contract_address, error=str(e))
-            return None
+            logger.warning("LLM fallback also failed", contract_address=token.contract_address, error=str(e))
+            await db.rollback_mirofish_job(job_id)
+            raise ScorerError(f"Both MiroFish and LLM fallback failed: {e}") from e

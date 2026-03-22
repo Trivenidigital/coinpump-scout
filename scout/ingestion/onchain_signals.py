@@ -23,8 +23,11 @@ logger = structlog.get_logger()
 
 DEXSCREENER_PAIR_URL = "https://api.dexscreener.com/tokens/v1"
 
-# Known smart-money / alpha wallets (curated set — extend as needed)
-SMART_MONEY_WALLETS: set[str] = set()
+def _get_smart_wallets(settings: Settings) -> set[str]:
+    """Load smart money wallet set from config."""
+    if not settings.SMART_MONEY_WALLETS:
+        return set()
+    return {w.strip() for w in settings.SMART_MONEY_WALLETS.split(",") if w.strip()}
 
 
 # ------------------------------------------------------------------
@@ -67,6 +70,7 @@ async def check_smart_money(
     smart_money_count = 0
     whale_count = 0
     whale_txn_count = 0
+    smart_wallets = _get_smart_wallets(settings)
 
     for txn in txns:
         fee_payer = txn.get("feePayer", "")
@@ -90,7 +94,7 @@ async def check_smart_money(
         buyer_wallets.add(buyer)
 
         # Check smart money set
-        if buyer in SMART_MONEY_WALLETS or fee_payer in SMART_MONEY_WALLETS:
+        if buyer in smart_wallets or fee_payer in smart_wallets:
             smart_money_count += 1
 
         # Whale detection: estimate USD value from native SOL transferred

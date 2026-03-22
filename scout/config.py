@@ -78,6 +78,8 @@ class Settings(BaseSettings):
 
     # On-chain signal enrichment
     ONCHAIN_SIGNALS_ENABLED: bool = True
+    SMART_MONEY_WALLETS: str = ""  # Comma-separated tracked wallet addresses
+    SMART_MONEY_BOOST_CAP: int = 80  # Max total smart money score boost
 
     # Safety
     GOPLUS_FAIL_CLOSED: bool = True  # False = fail open on unknown tokens (allows new tokens GoPlus hasn't indexed)

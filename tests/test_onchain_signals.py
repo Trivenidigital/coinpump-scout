@@ -70,3 +70,19 @@ async def test_check_volume_spike_no_spike_below_3x():
     result = await check_volume_spike("0xTEST1234", 25000.0, mock_db, settings)
     assert result["volume_spike"] is False
     assert result["volume_ratio"] == 2.5
+
+
+def test_smart_money_wallets_loaded_from_config():
+    """SMART_MONEY_WALLETS should be loaded from settings, not empty set."""
+    from scout.ingestion.onchain_signals import _get_smart_wallets
+    settings = _settings(SMART_MONEY_WALLETS="wallet1,wallet2,wallet3")
+    wallets = _get_smart_wallets(settings)
+    assert wallets == {"wallet1", "wallet2", "wallet3"}
+
+
+def test_smart_money_wallets_empty_when_not_configured():
+    """SMART_MONEY_WALLETS returns empty set when not configured."""
+    from scout.ingestion.onchain_signals import _get_smart_wallets
+    settings = _settings(SMART_MONEY_WALLETS="")
+    wallets = _get_smart_wallets(settings)
+    assert wallets == set()

@@ -613,6 +613,41 @@ class Database:
     # Smart money injections
     # ------------------------------------------------------------------
 
+    async def get_unprocessed_injections(self) -> list[dict]:
+        """Read unprocessed smart money injections WITHOUT marking them."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized.")
+        cursor = await self._conn.execute(
+            "SELECT id, token_mint, wallet_address, tx_signature, source, detected_at "
+            "FROM smart_money_injections WHERE processed = 0"
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def mark_injections_processed(self, ids: list[int]) -> None:
+        """Mark specific injection IDs as processed."""
+        if not ids or self._conn is None:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        await self._conn.execute(
+            f"UPDATE smart_money_injections SET processed = 1 WHERE id IN ({placeholders})",
+            ids,
+        )
+        await self._conn.commit()
+
+    async def get_oldest_unprocessed_injection_age_seconds(self) -> float | None:
+        """Get age in seconds of the oldest unprocessed injection, or None if none exist."""
+        if self._conn is None:
+            return None
+        cursor = await self._conn.execute(
+            "SELECT MIN(detected_at) FROM smart_money_injections WHERE processed = 0"
+        )
+        row = await cursor.fetchone()
+        if not row or not row[0]:
+            return None
+        from datetime import datetime, timezone
+        oldest = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - oldest).total_seconds()
+
     async def read_and_mark_injections(self) -> list[dict]:
         """Read unprocessed smart money injections and mark them processed atomically.
 

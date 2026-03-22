@@ -110,16 +110,9 @@ async def run_cycle(
 
     # Processing lag monitor
     try:
-        cursor = await db._conn.execute(
-            "SELECT MIN(detected_at) FROM smart_money_injections WHERE processed = 0"
-        )
-        row = await cursor.fetchone()
-        if row and row[0]:
-            from datetime import datetime as _dt
-            oldest = _dt.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
-            lag_seconds = (datetime.now(timezone.utc) - oldest).total_seconds()
-            if lag_seconds > 300:
-                logger.warning("Smart money injections backing up", oldest_age_min=int(lag_seconds / 60))
+        lag = await db.get_oldest_unprocessed_injection_age_seconds()
+        if lag is not None and lag > 300:
+            logger.warning("Smart money injections backing up", oldest_age_min=int(lag / 60))
     except Exception:
         pass
 

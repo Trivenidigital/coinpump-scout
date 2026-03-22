@@ -448,7 +448,7 @@ async def enrich_onchain_signals(
     # 1. Smart money / whale detection (Solana only, requires Helius)
     if token.chain == "solana" and settings.HELIUS_API_KEY:
         sm_data = await check_smart_money(token.contract_address, session, settings)
-        updates["smart_money_buys"] = sm_data["smart_money_buys"]
+        updates["smart_money_buys"] = max(token.smart_money_buys, sm_data["smart_money_buys"])
         updates["whale_buys"] = sm_data["whale_buys"]
 
     # 2. Liquidity lock check

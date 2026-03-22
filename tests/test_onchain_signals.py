@@ -24,16 +24,14 @@ def _make_token(**overrides):
     return CandidateToken(**defaults)
 
 
-def test_enrich_disabled_returns_unchanged():
+@pytest.mark.asyncio
+async def test_enrich_disabled_returns_unchanged():
     """When ONCHAIN_SIGNALS_ENABLED=False, token is returned unchanged."""
-    import asyncio
     settings = _settings(ONCHAIN_SIGNALS_ENABLED=False)
     token = _make_token()
     mock_session = AsyncMock()
     mock_db = AsyncMock()
-    result = asyncio.get_event_loop().run_until_complete(
-        enrich_onchain_signals(token, mock_session, mock_db, settings)
-    )
+    result = await enrich_onchain_signals(token, mock_session, mock_db, settings)
     assert result.smart_money_buys == 0
 
 
@@ -78,6 +76,60 @@ def test_smart_money_wallets_loaded_from_config():
     settings = _settings(SMART_MONEY_WALLETS="wallet1,wallet2,wallet3")
     wallets = _get_smart_wallets(settings)
     assert wallets == {"wallet1", "wallet2", "wallet3"}
+
+
+@pytest.mark.asyncio
+async def test_enrich_preserves_higher_smart_money_buys():
+    """C1: enrich_onchain_signals should preserve the higher smart_money_buys value."""
+    settings = _settings(HELIUS_API_KEY="test_key", ONCHAIN_SIGNALS_ENABLED=True)
+    # Token injected with 5 smart money buys from smart_money_feed
+    token = _make_token(smart_money_buys=5)
+    mock_session = AsyncMock()
+    mock_db = AsyncMock()
+    mock_db.get_avg_volume = AsyncMock(return_value=None)
+    mock_db.log_volume = AsyncMock()
+
+    # Helius returns only 2 smart money buys
+    with patch("scout.ingestion.onchain_signals.check_smart_money", new_callable=AsyncMock) as mock_sm, \
+         patch("scout.ingestion.onchain_signals.check_liquidity_lock", new_callable=AsyncMock) as mock_ll, \
+         patch("scout.ingestion.onchain_signals.check_holder_distribution", new_callable=AsyncMock) as mock_hd, \
+         patch("scout.ingestion.onchain_signals.check_multi_dex", new_callable=AsyncMock) as mock_md, \
+         patch("scout.ingestion.onchain_signals.check_cex_listing", new_callable=AsyncMock) as mock_cex:
+        mock_sm.return_value = {"smart_money_buys": 2, "whale_buys": 0, "unique_buyers_recent": 10, "whale_txns_1h": 0}
+        mock_ll.return_value = {"liquidity_locked": False, "lock_source": None}
+        mock_hd.return_value = {"holder_gini_healthy": False, "top5_concentration": 0.0}
+        mock_md.return_value = {"multi_dex": False, "dex_count": 0}
+        mock_cex.return_value = {"on_coingecko": False}
+
+        result = await enrich_onchain_signals(token, mock_session, mock_db, settings)
+        # Should keep 5 (from injection), not overwrite with 2 (from Helius)
+        assert result.smart_money_buys == 5
+
+
+@pytest.mark.asyncio
+async def test_enrich_uses_helius_when_higher():
+    """enrich_onchain_signals should use Helius value when it's higher than injection."""
+    settings = _settings(HELIUS_API_KEY="test_key", ONCHAIN_SIGNALS_ENABLED=True)
+    token = _make_token(smart_money_buys=1)
+    mock_session = AsyncMock()
+    mock_db = AsyncMock()
+    mock_db.get_avg_volume = AsyncMock(return_value=None)
+    mock_db.log_volume = AsyncMock()
+
+    with patch("scout.ingestion.onchain_signals.check_smart_money", new_callable=AsyncMock) as mock_sm, \
+         patch("scout.ingestion.onchain_signals.check_liquidity_lock", new_callable=AsyncMock) as mock_ll, \
+         patch("scout.ingestion.onchain_signals.check_holder_distribution", new_callable=AsyncMock) as mock_hd, \
+         patch("scout.ingestion.onchain_signals.check_multi_dex", new_callable=AsyncMock) as mock_md, \
+         patch("scout.ingestion.onchain_signals.check_cex_listing", new_callable=AsyncMock) as mock_cex:
+        mock_sm.return_value = {"smart_money_buys": 4, "whale_buys": 1, "unique_buyers_recent": 10, "whale_txns_1h": 0}
+        mock_ll.return_value = {"liquidity_locked": False, "lock_source": None}
+        mock_hd.return_value = {"holder_gini_healthy": False, "top5_concentration": 0.0}
+        mock_md.return_value = {"multi_dex": False, "dex_count": 0}
+        mock_cex.return_value = {"on_coingecko": False}
+
+        result = await enrich_onchain_signals(token, mock_session, mock_db, settings)
+        # Should use 4 from Helius since it's higher than 1 from injection
+        assert result.smart_money_buys == 4
 
 
 def test_smart_money_wallets_empty_when_not_configured():

@@ -255,6 +255,116 @@ async def test_cleanup_old_injections(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_get_unprocessed_injections_does_not_mark(tmp_path):
+    """get_unprocessed_injections should read rows without marking them processed."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.commit()
+    # First read
+    injections = await db.get_unprocessed_injections()
+    assert len(injections) == 1
+    assert injections[0]["token_mint"] == "mint1"
+    # Second read should still return the same row (not marked)
+    injections2 = await db.get_unprocessed_injections()
+    assert len(injections2) == 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_mark_injections_processed_only_marks_specified_ids(tmp_path):
+    """mark_injections_processed should only mark the specified IDs."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint2", "wallet2", "tx2"),
+    )
+    await db._conn.commit()
+    # Get IDs
+    injections = await db.get_unprocessed_injections()
+    assert len(injections) == 2
+    # Mark only the first one
+    await db.mark_injections_processed([injections[0]["id"]])
+    # Second read should only return the unmarked one
+    remaining = await db.get_unprocessed_injections()
+    assert len(remaining) == 1
+    assert remaining[0]["token_mint"] == "mint2"
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_mark_injections_processed_empty_list(tmp_path):
+    """mark_injections_processed with empty list should be a no-op."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature) VALUES (?, ?, ?)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.commit()
+    await db.mark_injections_processed([])
+    remaining = await db.get_unprocessed_injections()
+    assert len(remaining) == 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_oldest_unprocessed_injection_age_seconds(tmp_path):
+    """Should return age in seconds of oldest unprocessed injection."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    # Insert an old unprocessed injection
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature, detected_at) VALUES (?, ?, ?, ?)",
+        ("mint1", "wallet1", "tx1", "2020-01-01T00:00:00"),
+    )
+    await db._conn.commit()
+    age = await db.get_oldest_unprocessed_injection_age_seconds()
+    assert age is not None
+    assert age > 0
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_oldest_unprocessed_injection_age_none_when_empty(tmp_path):
+    """Should return None when no unprocessed injections exist."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    age = await db.get_oldest_unprocessed_injection_age_seconds()
+    assert age is None
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_oldest_unprocessed_injection_age_none_all_processed(tmp_path):
+    """Should return None when all injections are processed."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    await db._conn.execute(
+        "INSERT INTO smart_money_injections (token_mint, wallet_address, tx_signature, processed) VALUES (?, ?, ?, 1)",
+        ("mint1", "wallet1", "tx1"),
+    )
+    await db._conn.commit()
+    age = await db.get_oldest_unprocessed_injection_age_seconds()
+    assert age is None
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_prune_old_data(db):
     from datetime import datetime, timezone
     await db._conn.execute(

@@ -34,16 +34,20 @@ async def test_injection_write_read_cycle(tmp_path):
         ("mint_abc", "wallet2", "tx_002", "websocket"),
     )
     await db._conn.commit()
-    # Scout reads and marks processed
-    injections = await db.read_and_mark_injections()
+    # Scout reads unprocessed (doesn't mark yet)
+    injections = await db.get_unprocessed_injections()
     assert len(injections) == 2
     # Group by token
     wallets_per_token = defaultdict(set)
+    ids = []
     for inj in injections:
         wallets_per_token[inj["token_mint"]].add(inj["wallet_address"])
+        ids.append(inj["id"])
     assert wallets_per_token["mint_abc"] == {"wallet1", "wallet2"}
+    # Mark as processed after successful DexScreener fetch
+    await db.mark_injections_processed(ids)
     # Verify marked as processed
-    second_read = await db.read_and_mark_injections()
+    second_read = await db.get_unprocessed_injections()
     assert len(second_read) == 0
     await db.close()
 

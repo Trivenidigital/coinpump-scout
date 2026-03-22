@@ -73,6 +73,8 @@ class Database:
         """Open connection and create tables."""
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA busy_timeout=5000")
         await self._create_tables()
 
     async def close(self) -> None:

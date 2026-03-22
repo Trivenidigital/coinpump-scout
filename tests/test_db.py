@@ -165,6 +165,18 @@ async def test_log_signal_snapshot_stores_all_fields(db):
 
 
 @pytest.mark.asyncio
+async def test_wal_mode_enabled(tmp_path):
+    """Database should use WAL journal mode for concurrent access."""
+    from scout.db import Database
+    db = Database(tmp_path / "test.db")
+    await db.initialize()
+    cursor = await db._conn.execute("PRAGMA journal_mode")
+    row = await cursor.fetchone()
+    assert row[0] == "wal"
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_prune_old_data(db):
     from datetime import datetime, timezone
     await db._conn.execute(

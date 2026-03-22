@@ -483,6 +483,35 @@ class TestNewSignals:
         assert "small_txn_ratio" in signals
 
 
+class TestSmartMoneyGraduatedBoost:
+    """Task 6: Graduated smart money scorer boost — +20/wallet, capped at SMART_MONEY_BOOST_CAP."""
+
+    def test_smart_money_graduated_boost_1_wallet(self, token_factory, settings_factory):
+        """1 smart wallet buy = +20 points contribution."""
+        token = token_factory(smart_money_buys=1, liquidity_usd=20000)
+        settings = settings_factory(SMART_MONEY_BOOST_CAP=80)
+        points, signals = score(token, settings)
+        assert "smart_money_buys" in signals
+
+    def test_smart_money_graduated_boost_3_wallets(self, token_factory, settings_factory):
+        """3 smart wallet buys should score higher than 1."""
+        token_1 = token_factory(smart_money_buys=1, liquidity_usd=20000)
+        token_3 = token_factory(smart_money_buys=3, liquidity_usd=20000)
+        settings = settings_factory(SMART_MONEY_BOOST_CAP=80)
+        points_1, _ = score(token_1, settings)
+        points_3, _ = score(token_3, settings)
+        assert points_3 > points_1
+
+    def test_smart_money_boost_capped(self, token_factory, settings_factory):
+        """5 smart wallet buys should be capped same as 4 (both at 80)."""
+        settings = settings_factory(SMART_MONEY_BOOST_CAP=80)
+        token_4 = token_factory(smart_money_buys=4, liquidity_usd=20000)
+        token_5 = token_factory(smart_money_buys=5, liquidity_usd=20000)
+        points_4, _ = score(token_4, settings)
+        points_5, _ = score(token_5, settings)
+        assert points_5 == points_4
+
+
 class TestRawMax:
     """CR-001: RAW_MAX must stay in sync with the actual signal point totals."""
 

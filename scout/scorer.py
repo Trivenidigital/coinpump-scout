@@ -11,7 +11,7 @@ Scoring weights (must always document rationale):
 - unique_buyers (high relative to txns): 15 points -- Organic vs bot (BL-021)
 - solana_bonus: 5 points -- Meme premium (BL-030)
 - small_txn_ratio (>60% small txns): 5 points -- Organic distribution (BL-024)
-- smart_money_buys (>0): 10 points -- Known alpha wallets buying (on-chain signal)
+- smart_money_buys: +20 per wallet (capped at SMART_MONEY_BOOST_CAP) -- Graduated alpha wallet boost
 - whale_buys (>=3): 5 points -- Multiple large buyers (on-chain signal)
 - liquidity_locked: 10 points -- Reduced rug risk (on-chain signal)
 - volume_spike (>5x): 15 points -- Extreme volume anomaly (on-chain signal)
@@ -157,10 +157,12 @@ def score(
         points += 5
         signals.append("small_txn_ratio")
 
-    # Signal 11: Smart Money Buys -- 10 points (on-chain signal)
-    # Known profitable wallets buying indicates informed money flow
+    # Signal 11: Smart Money Buys -- +20 per wallet, capped (on-chain signal)
+    # Graduated boost: more tracked wallets buying = higher confidence.
+    # Cap controlled by SMART_MONEY_BOOST_CAP setting.
     if token.smart_money_buys > 0:
-        points += 10
+        sm_boost = min(token.smart_money_buys * 20, settings.SMART_MONEY_BOOST_CAP)
+        points += sm_boost
         signals.append("smart_money_buys")
 
     # Signal 12: Whale Buys -- 5 points (on-chain signal)

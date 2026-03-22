@@ -22,6 +22,7 @@ from scout.ingestion.geckoterminal import fetch_trending_pools
 from scout.ingestion.holder_enricher import enrich_holders
 from scout.ingestion.onchain_signals import enrich_onchain_signals
 from scout.ingestion.pumpfun import fetch_pumpfun_graduated
+from scout.ingestion.smart_money_feed import fetch_smart_money_injections
 from scout.ingestion.cryptopanic import enrich_news_sentiment
 from scout.ingestion.social import enrich_social_sentiment
 from scout.models import CandidateToken
@@ -30,6 +31,8 @@ from scout.safety import is_safe
 from scout.scorer import score
 
 logger = structlog.get_logger()
+
+_last_injection_cleanup = datetime.min.replace(tzinfo=timezone.utc)
 
 
 async def run_cycle(
@@ -42,6 +45,17 @@ async def run_cycle(
 
     Returns stats dict with tokens_scanned, candidates_promoted, alerts_fired, etc.
     """
+    global _last_injection_cleanup
+    now_utc = datetime.now(timezone.utc)
+    if (now_utc - _last_injection_cleanup).total_seconds() > 3600:
+        try:
+            deleted = await db.cleanup_old_injections()
+            if deleted:
+                logger.info("Cleaned up old injections", deleted=deleted)
+            _last_injection_cleanup = now_utc
+        except Exception as e:
+            logger.warning("Injection cleanup failed", error=str(e))
+
     stats = {"tokens_scanned": 0, "candidates_promoted": 0, "alerts_fired": 0}
     scan_cycle = int(datetime.now(timezone.utc).timestamp())
 
@@ -80,10 +94,35 @@ async def run_cycle(
         logger.warning("PumpFun ingestion failed", error=str(pumpfun_tokens))
         pumpfun_tokens = []
 
+    # Stage 1b: Smart money injections (Direction 2)
+    try:
+        sm_candidates = await fetch_smart_money_injections(session, db, settings)
+        if sm_candidates:
+            logger.info("Smart money feed injected", count=len(sm_candidates))
+    except Exception as e:
+        logger.warning("Smart money feed failed", error=str(e))
+        sm_candidates = []
+
     # Stage 2: Aggregate
     all_candidates = aggregate(
-        list(dex_tokens) + list(gecko_tokens) + list(birdeye_tokens) + list(pumpfun_tokens)
+        list(dex_tokens) + list(gecko_tokens) + list(birdeye_tokens) + list(pumpfun_tokens) + sm_candidates
     )[:settings.MAX_CANDIDATES_PER_CYCLE]
+
+    # Processing lag monitor
+    try:
+        cursor = await db._conn.execute(
+            "SELECT MIN(detected_at) FROM smart_money_injections WHERE processed = 0"
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            from datetime import datetime as _dt
+            oldest = _dt.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+            lag_seconds = (datetime.now(timezone.utc) - oldest).total_seconds()
+            if lag_seconds > 300:
+                logger.warning("Smart money injections backing up", oldest_age_min=int(lag_seconds / 60))
+    except Exception:
+        pass
+
     stats["tokens_scanned"] = len(all_candidates)
 
     # Enrich holders sequentially to respect Helius rate limits

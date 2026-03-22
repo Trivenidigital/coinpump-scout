@@ -90,6 +90,7 @@ class Settings(BaseSettings):
 
     # Database
     DB_PATH: Path = Path("scout.db")
+    INJECTIONS_DB_PATH: Path = Path("injections.db")
 
     # Claude fallback
     ANTHROPIC_API_KEY: str

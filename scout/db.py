@@ -245,18 +245,6 @@ class Database:
                 price_change_pct  REAL
             );
 
-            CREATE TABLE IF NOT EXISTS smart_money_injections (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                token_mint      TEXT NOT NULL,
-                wallet_address  TEXT NOT NULL,
-                tx_signature    TEXT,
-                source          TEXT DEFAULT 'websocket',
-                detected_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                processed       INTEGER DEFAULT 0,
-                UNIQUE(token_mint, tx_signature)
-            );
-            CREATE INDEX IF NOT EXISTS idx_smi_unprocessed
-                ON smart_money_injections(processed, detected_at);
             """
         )
 
@@ -608,85 +596,6 @@ class Database:
     # ------------------------------------------------------------------
     # Data retention
     # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Smart money injections
-    # ------------------------------------------------------------------
-
-    async def get_unprocessed_injections(self) -> list[dict]:
-        """Read unprocessed smart money injections WITHOUT marking them."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        cursor = await self._conn.execute(
-            "SELECT id, token_mint, wallet_address, tx_signature, source, detected_at "
-            "FROM smart_money_injections WHERE processed = 0"
-        )
-        return [dict(row) for row in await cursor.fetchall()]
-
-    async def mark_injections_processed(self, ids: list[int]) -> None:
-        """Mark specific injection IDs as processed."""
-        if not ids or self._conn is None:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        await self._conn.execute(
-            f"UPDATE smart_money_injections SET processed = 1 WHERE id IN ({placeholders})",
-            ids,
-        )
-        await self._conn.commit()
-
-    async def get_oldest_unprocessed_injection_age_seconds(self) -> float | None:
-        """Get age in seconds of the oldest unprocessed injection, or None if none exist."""
-        if self._conn is None:
-            return None
-        cursor = await self._conn.execute(
-            "SELECT MIN(detected_at) FROM smart_money_injections WHERE processed = 0"
-        )
-        row = await cursor.fetchone()
-        if not row or not row[0]:
-            return None
-        from datetime import datetime, timezone
-        oldest = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - oldest).total_seconds()
-
-    async def read_and_mark_injections(self) -> list[dict]:
-        """Read unprocessed smart money injections and mark them processed atomically.
-
-        Uses explicit IDs to avoid marking rows inserted between SELECT and UPDATE.
-        """
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        rows_data = []
-        await self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = await self._conn.execute(
-                "SELECT id, token_mint, wallet_address, tx_signature, source, detected_at "
-                "FROM smart_money_injections WHERE processed = 0"
-            )
-            rows = await cursor.fetchall()
-            if rows:
-                ids = [row["id"] for row in rows]
-                rows_data = [dict(row) for row in rows]
-                placeholders = ",".join("?" for _ in ids)
-                await self._conn.execute(
-                    f"UPDATE smart_money_injections SET processed = 1 WHERE id IN ({placeholders})",
-                    ids,
-                )
-            await self._conn.commit()
-        except Exception:
-            await self._conn.rollback()
-            raise
-        return rows_data
-
-    async def cleanup_old_injections(self, days: int = 7) -> int:
-        """Delete processed injections older than N days. Returns count deleted."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        cursor = await self._conn.execute(
-            "DELETE FROM smart_money_injections WHERE processed = 1 AND detected_at < datetime('now', ?)",
-            (f"-{days} days",),
-        )
-        await self._conn.commit()
-        return cursor.rowcount
 
     async def prune_old_data(self, retention_days: int = 30) -> None:
         """Delete time-series data older than retention_days.

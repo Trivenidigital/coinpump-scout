@@ -8,6 +8,7 @@ import sys
 from datetime import datetime, timezone
 
 import aiohttp
+import aiosqlite
 import structlog
 
 from scout.aggregator import aggregate
@@ -49,9 +50,14 @@ async def run_cycle(
     now_utc = datetime.now(timezone.utc)
     if (now_utc - _last_injection_cleanup).total_seconds() > 3600:
         try:
-            deleted = await db.cleanup_old_injections()
-            if deleted:
-                logger.info("Cleaned up old injections", deleted=deleted)
+            async with aiosqlite.connect(str(settings.INJECTIONS_DB_PATH)) as inj_conn:
+                await inj_conn.execute("PRAGMA busy_timeout=5000")
+                cursor = await inj_conn.execute(
+                    "DELETE FROM smart_money_injections WHERE processed = 1 AND detected_at < datetime('now', '-7 days')"
+                )
+                await inj_conn.commit()
+                if cursor.rowcount:
+                    logger.info("Cleaned up old injections", deleted=cursor.rowcount)
             _last_injection_cleanup = now_utc
         except Exception as e:
             logger.warning("Injection cleanup failed", error=str(e))
@@ -108,11 +114,19 @@ async def run_cycle(
         list(dex_tokens) + list(gecko_tokens) + list(birdeye_tokens) + list(pumpfun_tokens) + sm_candidates
     )[:settings.MAX_CANDIDATES_PER_CYCLE]
 
-    # Processing lag monitor
+    # Processing lag monitor (reads from separate injections.db)
     try:
-        lag = await db.get_oldest_unprocessed_injection_age_seconds()
-        if lag is not None and lag > 300:
-            logger.warning("Smart money injections backing up", oldest_age_min=int(lag / 60))
+        async with aiosqlite.connect(str(settings.INJECTIONS_DB_PATH)) as inj_conn:
+            await inj_conn.execute("PRAGMA busy_timeout=5000")
+            cursor = await inj_conn.execute(
+                "SELECT MIN(detected_at) FROM smart_money_injections WHERE processed = 0"
+            )
+            row = await cursor.fetchone()
+            if row and row[0]:
+                oldest = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+                lag = (datetime.now(timezone.utc) - oldest).total_seconds()
+                if lag > 300:
+                    logger.warning("Smart money injections backing up", oldest_age_min=int(lag / 60))
     except Exception as e:
         logger.debug("Injection lag check failed", error=str(e))
 

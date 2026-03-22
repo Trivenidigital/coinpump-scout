@@ -69,7 +69,8 @@ async def fetch_smart_money_injections(
             data = [data] if data else []
 
         for item in data:
-            addr = item.get("tokenAddress", "")
+            # DexScreener pairs endpoint returns baseToken.address, not tokenAddress
+            addr = item.get("tokenAddress") or (item.get("baseToken") or {}).get("address", "")
             if addr:
                 dex_by_mint[addr] = item
 
@@ -83,9 +84,10 @@ async def fetch_smart_money_injections(
             logger.debug("No DexScreener data for injected token", mint=mint[:20])
             continue
 
-        info = dex_data.get("info", {})
-        name = info.get("name", "Unknown")
-        ticker = info.get("symbol", "???")
+        base_token = dex_data.get("baseToken") or {}
+        info = dex_data.get("info") or {}
+        name = base_token.get("name") or info.get("name", "Unknown")
+        ticker = base_token.get("symbol") or info.get("symbol", "???")
         mcap = dex_data.get("marketCap", 0) or 0
         liq = (dex_data.get("liquidity") or {}).get("usd", 0) or 0
         vol = (dex_data.get("volume") or {}).get("h24", 0) or 0

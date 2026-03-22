@@ -113,8 +113,8 @@ async def run_cycle(
         lag = await db.get_oldest_unprocessed_injection_age_seconds()
         if lag is not None and lag > 300:
             logger.warning("Smart money injections backing up", oldest_age_min=int(lag / 60))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Injection lag check failed", error=str(e))
 
     stats["tokens_scanned"] = len(all_candidates)
 

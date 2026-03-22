@@ -226,6 +226,9 @@ async def run_cycle(
             token, db, session, settings, signals_fired=signals,
         )
 
+        # Persist narrative + conviction scores to candidates table
+        await db.upsert_candidate(gated_token)
+
         if not should_alert:
             # Update snapshot with narrative/conviction even if not alerting
             await db.log_signal_snapshot(

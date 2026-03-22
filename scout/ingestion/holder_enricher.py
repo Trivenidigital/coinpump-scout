@@ -52,8 +52,8 @@ async def enrich_holders(
     if token.chain == "solana":
         # Rugcheck first (free, fast, no API key)
         token = await _enrich_rugcheck(token, session)
-        # Only call Helius if Rugcheck didn't provide holder data
-        if settings.HELIUS_API_KEY and token.holder_count <= 1:
+        # Call Helius if Rugcheck only returned capped data (free tier caps at ~20)
+        if settings.HELIUS_API_KEY and token.holder_count <= 20:
             token = await _enrich_solana_helius(token, session, settings)
         return token
     elif token.chain in MORALIS_CHAIN_MAP:

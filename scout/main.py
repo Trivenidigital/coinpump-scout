@@ -137,6 +137,31 @@ async def run_cycle(
         for i, token in enumerate(enriched):
             enriched[i] = await enrich_onchain_signals(token, session, db, settings)
 
+    # Data quality alert — catch dead signals
+    dead_signals: list[str] = []
+    total = len(enriched)
+    if total > 0:
+        has_holder_count = sum(1 for t in enriched if t.holder_count > 20)
+        has_holder_growth = sum(1 for t in enriched if t.holder_growth_1h > 0)
+        has_unique_buyers = sum(1 for t in enriched if t.unique_buyers_1h > 0)
+        has_whale_buys = sum(1 for t in enriched if t.whale_buys > 0)
+
+        if has_holder_count == 0:
+            dead_signals.append("holder_count (all capped at 20)")
+        if has_holder_growth == 0:
+            dead_signals.append("holder_growth_1h")
+        if has_unique_buyers == 0:
+            dead_signals.append("unique_buyers_1h")
+        if has_whale_buys == 0:
+            dead_signals.append("whale_buys")
+
+        if dead_signals:
+            logger.warning(
+                "Dead signals detected — scoring is degraded",
+                dead_signals=dead_signals,
+                tokens_checked=total,
+            )
+
     # Stage 3: Score
     scored = []
     for token in enriched:
@@ -296,6 +321,9 @@ async def run_cycle(
             alerted=True, safe=True,
         )
         await db.commit()
+
+    # Log data quality stats in cycle output
+    stats["dead_signals"] = len(dead_signals) if dead_signals else 0
 
     return stats
 

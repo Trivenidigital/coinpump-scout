@@ -47,7 +47,8 @@ async def evaluate(
     if narrative_score is not None:
         conviction = (quant_score * settings.QUANT_WEIGHT) + (narrative_score * settings.NARRATIVE_WEIGHT)
     else:
-        conviction = float(quant_score)
+        # No narrative score — apply quant weight only (no free pass)
+        conviction = quant_score * settings.QUANT_WEIGHT
 
     should_alert = conviction >= settings.CONVICTION_THRESHOLD
 

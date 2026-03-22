@@ -34,6 +34,7 @@ from scout.scorer import score
 logger = structlog.get_logger()
 
 _last_injection_cleanup = datetime.min.replace(tzinfo=timezone.utc)
+_last_data_prune = datetime.min.replace(tzinfo=timezone.utc)
 
 
 async def run_cycle(
@@ -46,7 +47,7 @@ async def run_cycle(
 
     Returns stats dict with tokens_scanned, candidates_promoted, alerts_fired, etc.
     """
-    global _last_injection_cleanup
+    global _last_injection_cleanup, _last_data_prune
     now_utc = datetime.now(timezone.utc)
     if (now_utc - _last_injection_cleanup).total_seconds() > 3600:
         try:
@@ -61,6 +62,15 @@ async def run_cycle(
             _last_injection_cleanup = now_utc
         except Exception as e:
             logger.warning("Injection cleanup failed", error=str(e))
+
+    if (now_utc - _last_data_prune).total_seconds() > 3600:
+        try:
+            pruned = await db.prune_old_data()
+            if pruned:
+                logger.info("Pruned old data", rows=pruned)
+            _last_data_prune = now_utc
+        except Exception as e:
+            logger.warning("Data prune failed", error=str(e))
 
     stats = {"tokens_scanned": 0, "candidates_promoted": 0, "alerts_fired": 0}
     scan_cycle = int(datetime.now(timezone.utc).timestamp())

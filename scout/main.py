@@ -65,9 +65,8 @@ async def run_cycle(
 
     if (now_utc - _last_data_prune).total_seconds() > 86400:
         try:
-            pruned = await db.prune_old_data()
-            if pruned:
-                logger.info("Pruned old data", rows=pruned)
+            await db.prune_old_data()
+            logger.info("Pruned old data")
             state["last_data_prune"] = now_utc
         except Exception as e:
             logger.warning("Data prune failed", error=str(e))

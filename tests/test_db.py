@@ -66,14 +66,6 @@ async def test_log_alert_and_daily_count(db):
     assert count == 2
 
 
-async def test_log_mirofish_job_and_daily_count(db):
-    await db.log_mirofish_job("0xjob1")
-    await db.log_mirofish_job("0xjob2")
-    await db.log_mirofish_job("0xjob3")
-    count = await db.get_daily_mirofish_count()
-    assert count == 3
-
-
 async def test_get_recent_alerts(db):
     await db.log_alert("0xrecent", "solana", 90.0)
     alerts = await db.get_recent_alerts(days=30)

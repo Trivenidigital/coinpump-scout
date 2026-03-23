@@ -6,8 +6,7 @@ import aiohttp
 
 from scout.config import Settings
 from scout.db import Database
-from scout.exceptions import MiroFishConnectionError, MiroFishTimeoutError, ScorerError
-from scout.mirofish.client import simulate
+from scout.exceptions import ScorerError
 from scout.mirofish.fallback import score_narrative_fallback
 from scout.mirofish.seed_builder import build_seed
 from scout.models import CandidateToken
@@ -30,27 +29,27 @@ async def evaluate(
     quant_score = token.quant_score or 0
     narrative_score = None
 
-    # Only run MiroFish if quant_score passes MIN_SCORE and daily cap not reached
+    # Run narrative scoring (direct Claude Haiku call) if quant_score passes MIN_SCORE
     if quant_score >= settings.MIN_SCORE:
-        daily_count = await db.get_daily_mirofish_count()
-        if daily_count < settings.MAX_MIROFISH_JOBS_PER_DAY:
-            try:
-                narrative_score = await _get_narrative_score(
-                    token, session, db, settings, signals_fired=signals_fired,
-                )
-            except ScorerError as e:
-                logger.warning("Narrative scoring failed, using quant-only",
-                               contract_address=token.contract_address, error=str(e))
-                narrative_score = None
+        try:
+            narrative_score = await _get_narrative_score(
+                token, settings, signals_fired=signals_fired,
+            )
+        except ScorerError as e:
+            logger.warning("Narrative scoring failed, using quant-only",
+                           contract_address=token.contract_address, error=str(e))
+            narrative_score = None
 
     # Compute conviction score
     if narrative_score is not None:
         conviction = (quant_score * settings.QUANT_WEIGHT) + (narrative_score * settings.NARRATIVE_WEIGHT)
     else:
-        # No narrative score — apply quant weight only (no free pass)
+        # No narrative score — use quant-only with higher threshold (M3)
         conviction = quant_score * settings.QUANT_WEIGHT
 
-    should_alert = conviction >= settings.CONVICTION_THRESHOLD
+    # M3: Use higher threshold when narrative is unavailable
+    threshold = settings.CONVICTION_THRESHOLD if narrative_score is not None else settings.QUANT_ONLY_CONVICTION_THRESHOLD
+    should_alert = conviction >= threshold
 
     # Update token with scores
     updated = token.model_copy(update={
@@ -63,30 +62,17 @@ async def evaluate(
 
 async def _get_narrative_score(
     token: CandidateToken,
-    session: aiohttp.ClientSession,
-    db: Database,
     settings: Settings,
     signals_fired: list[str] | None = None,
 ) -> int | None:
-    """Run MiroFish simulation with LLM fallback.
+    """Score narrative using Claude Haiku directly.
 
-    The MiroFish job is reserved optimistically BEFORE any call to prevent
-    race conditions with concurrent cycles checking the daily count.
+    Raises ScorerError on failure.
     """
     seed = build_seed(token, signals_fired=signals_fired)
 
-    # Reserve the MiroFish job slot BEFORE the call to prevent race conditions
-    job_id = await db.log_mirofish_job(token.contract_address)
-
     try:
-        result = await simulate(seed, session, settings)
+        result = await score_narrative_fallback(seed, settings.ANTHROPIC_API_KEY)
         return result.narrative_score
-    except (MiroFishTimeoutError, MiroFishConnectionError) as e:
-        logger.warning("MiroFish failed, falling back to LLM", contract_address=token.contract_address, error=str(e))
-        try:
-            result = await score_narrative_fallback(seed, settings.ANTHROPIC_API_KEY)
-            return result.narrative_score
-        except Exception as e:
-            logger.warning("LLM fallback also failed", contract_address=token.contract_address, error=str(e))
-            await db.rollback_mirofish_job(job_id)
-            raise ScorerError(f"Both MiroFish and LLM fallback failed: {e}") from e
+    except Exception as e:
+        raise ScorerError(f"Narrative scoring failed: {e}") from e

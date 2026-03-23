@@ -33,21 +33,21 @@ from scout.scorer import score
 
 logger = structlog.get_logger()
 
-_last_injection_cleanup = datetime.min.replace(tzinfo=timezone.utc)
-_last_data_prune = datetime.min.replace(tzinfo=timezone.utc)
-
-
 async def run_cycle(
     settings: Settings,
     db: Database,
     session: aiohttp.ClientSession,
     dry_run: bool = False,
+    state: dict | None = None,
 ) -> dict:
     """Run one full pipeline cycle.
 
     Returns stats dict with tokens_scanned, candidates_promoted, alerts_fired, etc.
     """
-    global _last_injection_cleanup, _last_data_prune
+    if state is None:
+        state = {}
+    _last_injection_cleanup = state.get("last_injection_cleanup", datetime.min.replace(tzinfo=timezone.utc))
+    _last_data_prune = state.get("last_data_prune", datetime.min.replace(tzinfo=timezone.utc))
     now_utc = datetime.now(timezone.utc)
     if (now_utc - _last_injection_cleanup).total_seconds() > 3600:
         try:
@@ -59,16 +59,16 @@ async def run_cycle(
                 await inj_conn.commit()
                 if cursor.rowcount:
                     logger.info("Cleaned up old injections", deleted=cursor.rowcount)
-            _last_injection_cleanup = now_utc
+            state["last_injection_cleanup"] = now_utc
         except Exception as e:
             logger.warning("Injection cleanup failed", error=str(e))
 
-    if (now_utc - _last_data_prune).total_seconds() > 3600:
+    if (now_utc - _last_data_prune).total_seconds() > 86400:
         try:
             pruned = await db.prune_old_data()
             if pruned:
                 logger.info("Pruned old data", rows=pruned)
-            _last_data_prune = now_utc
+            state["last_data_prune"] = now_utc
         except Exception as e:
             logger.warning("Data prune failed", error=str(e))
 
@@ -142,10 +142,14 @@ async def run_cycle(
 
     stats["tokens_scanned"] = len(all_candidates)
 
-    # Enrich holders sequentially to respect Helius rate limits
-    enriched = []
-    for token in all_candidates:
-        enriched.append(await enrich_holders(token, session, settings))
+    # C1: Concurrent holder enrichment with semaphore to respect Helius rate limits
+    holder_sem = asyncio.Semaphore(5)
+
+    async def _enrich_one(token):
+        async with holder_sem:
+            return await enrich_holders(token, session, settings)
+
+    enriched = list(await asyncio.gather(*[_enrich_one(t) for t in all_candidates]))
 
     # BL-020: Compute holder_growth_1h from previous snapshots
     for i, token in enumerate(enriched):
@@ -156,10 +160,15 @@ async def run_cycle(
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
 
-    # Stage 2c: On-chain signal enrichment
+    # Stage 2c: On-chain signal enrichment (C1: concurrent with semaphore)
     if settings.ONCHAIN_SIGNALS_ENABLED:
-        for i, token in enumerate(enriched):
-            enriched[i] = await enrich_onchain_signals(token, session, db, settings)
+        onchain_sem = asyncio.Semaphore(3)
+
+        async def _enrich_onchain(token):
+            async with onchain_sem:
+                return await enrich_onchain_signals(token, session, db, settings)
+
+        enriched = list(await asyncio.gather(*[_enrich_onchain(t) for t in enriched]))
 
     # Data quality alert — catch dead signals
     dead_signals: list[str] = []
@@ -244,7 +253,7 @@ async def run_cycle(
             enriched_scored.append((token, signals))
         scored = enriched_scored
 
-    # Stages 4-5: Gate (MiroFish + conviction)
+    # Stages 4-5: Gate (narrative scorer + conviction)
     for token, signals in scored:
         should_alert, conviction, gated_token = await evaluate(
             token, db, session, settings, signals_fired=signals,
@@ -288,6 +297,7 @@ async def run_cycle(
 
         # Dedup: skip if already alerted recently
         # Exception: high conviction + profitable exit + 20% dip = allow re-entry
+        should_skip = False  # C2: initialize before conditional block
         if await db.was_recently_alerted(gated_token.contract_address):
             should_skip = True
 
@@ -395,11 +405,16 @@ async def main() -> None:
     except (OSError, ValueError):
         pass  # SIGTERM not supported on Windows
 
-    # Start pool watcher background task if enabled
+    # M4: Only start pool watcher if explicitly enabled
     pool_watcher_task = None
     if settings.POOL_WATCHER_ENABLED:
         pool_watcher_task = asyncio.create_task(watch_new_pools(settings))
         logger.info("Pool watcher background task started")
+    else:
+        logger.debug("Pool watcher disabled (set POOL_WATCHER_ENABLED=true to enable)")
+
+    # H4: Pipeline state tracked in a dict inside main(), passed to run_cycle
+    cycle_state: dict = {}
 
     cycle_count = 0
     cumulative = {"tokens_scanned": 0, "candidates_promoted": 0, "alerts_fired": 0}
@@ -407,19 +422,25 @@ async def main() -> None:
     try:
         async with aiohttp.ClientSession() as session:
             while not shutdown_event.is_set():
-                # Drain new pool signatures from WebSocket watcher (infrastructure only)
-                fresh_pools = []
-                while not new_pool_queue.empty():
-                    try:
-                        fresh_pools.append(new_pool_queue.get_nowait())
-                    except asyncio.QueueEmpty:
-                        break
-                if fresh_pools:
-                    logger.info("Fresh pools from WebSocket", count=len(fresh_pools))
+                # M4: Drain new pool signatures from WebSocket watcher
+                # WARNING: pool data is drained but not yet processed by the pipeline
+                if settings.POOL_WATCHER_ENABLED:
+                    fresh_pools = []
+                    while not new_pool_queue.empty():
+                        try:
+                            fresh_pools.append(new_pool_queue.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+                    if fresh_pools:
+                        logger.warning(
+                            "Pool watcher data drained but not yet processed by pipeline",
+                            count=len(fresh_pools),
+                        )
 
                 try:
                     stats = await run_cycle(
-                        settings, db, session, dry_run=args.dry_run
+                        settings, db, session, dry_run=args.dry_run,
+                        state=cycle_state,
                     )
                     logger.info("Cycle complete", **stats)
                     for k in cumulative:
@@ -431,11 +452,9 @@ async def main() -> None:
 
                 # BL-033: Heartbeat logging every N cycles
                 if cycle_count % heartbeat_interval == 0:
-                    mirofish_today = await db.get_daily_mirofish_count()
                     logger.info(
                         "Heartbeat",
                         cycles_completed=cycle_count,
-                        mirofish_jobs_today=mirofish_today,
                         **cumulative,
                     )
 

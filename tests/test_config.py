@@ -27,9 +27,6 @@ def test_settings_loads_defaults():
     assert s.MIN_VOL_LIQ_RATIO == 5.0
     assert s.MIN_LIQUIDITY_USD == 15_000
     assert s.CHAINS == ["solana", "base", "ethereum"]
-    assert s.MIROFISH_URL == "http://localhost:5001"
-    assert s.MIROFISH_TIMEOUT_SEC == 180
-    assert s.MAX_MIROFISH_JOBS_PER_DAY == 50
     assert s.DB_PATH == Path("scout.db")
     assert isinstance(s.DB_PATH, Path)
     assert s.HELIUS_API_KEY == ""
@@ -65,12 +62,10 @@ def test_settings_custom_overrides():
         MIN_SCORE=40,
         CONVICTION_THRESHOLD=80,
         SCAN_INTERVAL_SECONDS=30,
-        MAX_MIROFISH_JOBS_PER_DAY=100,
     )
     assert s.MIN_SCORE == 40
     assert s.CONVICTION_THRESHOLD == 80
     assert s.SCAN_INTERVAL_SECONDS == 30
-    assert s.MAX_MIROFISH_JOBS_PER_DAY == 100
 
 
 def test_whale_detection_defaults():

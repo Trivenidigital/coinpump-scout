@@ -148,8 +148,8 @@ async def _enrich_solana_helius(
     """Supplement with Helius data (transaction analysis, holder count if missing)."""
     updates: dict = {}
 
-    # Only fetch holder count from Helius if Rugcheck didn't provide it
-    if token.holder_count <= 1:
+    # Fetch holder count from Helius if Rugcheck didn't provide it or returned capped data
+    if token.holder_count <= 20:
         holder_count = await _helius_holder_count(token.contract_address, session, settings)
         if holder_count is not None and holder_count > token.holder_count:
             updates["holder_count"] = holder_count
@@ -176,22 +176,50 @@ async def _enrich_solana_helius(
 async def _helius_holder_count(
     mint: str, session: aiohttp.ClientSession, settings: Settings,
 ) -> int | None:
-    """Fetch holder count from Helius DAS API (getTokenAccounts)."""
+    """Fetch holder count from Helius DAS API (getTokenAccounts).
+
+    Paginates with limit=1000 per page. The 'total' field in the response
+    just mirrors the page limit, so we count actual accounts returned.
+    Stops early once we have enough to confirm the token is active (1000+).
+    """
     url = helius_rpc_url(settings.HELIUS_API_KEY)
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "holder-enrichment",
-        "method": "getTokenAccounts",
-        "params": {"mint": mint, "limit": 1000},
-    }
+    holder_count = 0
+    cursor = None
+    max_pages = 3  # Up to 3000 holders
+
     try:
-        data = await helius_request(session, "post", url, json=payload)
-        if data is None:
-            return None
-        return data.get("result", {}).get("total", 0)
+        for _ in range(max_pages):
+            payload = {
+                "jsonrpc": "2.0",
+                "id": "holder-enrichment",
+                "method": "getTokenAccounts",
+                "params": {
+                    "mint": mint,
+                    "limit": 1000,
+                    "options": {"showZeroBalance": False},
+                },
+            }
+            if cursor:
+                payload["params"]["cursor"] = cursor
+
+            data = await helius_request(session, "post", url, json=payload)
+            if data is None:
+                return holder_count if holder_count > 0 else None
+
+            result = data.get("result", {})
+            accounts = result.get("token_accounts", [])
+            holder_count += len(accounts)
+            cursor = result.get("cursor")
+
+            if not cursor or not accounts:
+                break
+
+            await asyncio.sleep(0.2)
+
+        return holder_count
     except Exception:
         logger.warning("Helius holder lookup failed", contract_address=mint, exc_info=True)
-        return None
+        return holder_count if holder_count > 0 else None
 
 
 async def _helius_txn_analysis(

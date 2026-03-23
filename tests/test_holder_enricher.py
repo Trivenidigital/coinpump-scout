@@ -43,8 +43,10 @@ async def test_enrich_solana_with_helius(mock_aiohttp):
     helius_rpc = "https://mainnet.helius-rpc.com/?api-key=test-helius-key"
     helius_api = re.compile(r"https://api\.helius\.xyz/v0/addresses/.+/transactions.*")
 
-    # Mock DAS API (holder count) - called twice (holder count + deployer balance)
-    mock_aiohttp.post(helius_rpc, payload={"result": {"total": 450, "items": []}})
+    # Mock DAS API (holder count) - getTokenAccounts returns token_accounts list
+    mock_aiohttp.post(helius_rpc, payload={
+        "result": {"token_accounts": [{"address": f"a{i}"} for i in range(450)], "cursor": None}
+    })
     mock_aiohttp.post(helius_rpc, payload={
         "result": {
             "authorities": [{"address": "DeployerWallet"}],

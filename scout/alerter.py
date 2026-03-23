@@ -31,9 +31,39 @@ def format_alert_message(token: CandidateToken, signals: list[str]) -> str:
     if token.narrative_score is not None:
         lines.append(f"  Narrative: {narrative_display}")
 
-    # Signals
+    # Signals with human-readable labels
+    signal_labels = {
+        "vol_liq_ratio": "📊 High volume/liquidity ratio",
+        "holder_growth": "👥 Holder growth >20/hr",
+        "smart_money_buys": f"🐋 Smart wallet bought ({token.smart_money_buys}x)",
+        "buy_pressure": "🟢 Strong buy pressure >65%",
+        "unique_buyers": "👤 High unique buyer ratio",
+        "score_velocity": "📈 Score accelerating",
+        "volume_spike_5x": "🔥 Extreme volume spike (5x)",
+        "volume_spike_3x": "🔥 Volume spike (3x)",
+        "liquidity_locked": "🔒 Liquidity locked",
+        "whale_buys": "🐳 Multiple whale buys",
+        "whale_txns_1h": "🐳 Large SOL transactions",
+        "holder_gini_healthy": "✅ Healthy holder distribution",
+        "on_coingecko": "🦎 Listed on CoinGecko",
+        "multi_dex": "🔀 Multi-DEX liquidity",
+        "has_twitter": "🐦 Twitter present",
+        "has_telegram": "💬 Telegram community",
+        "has_github": "💻 GitHub repo present",
+        "has_news": "📰 News coverage",
+        "bullish_news": "📰 Bullish news sentiment",
+        "solana_bonus": "◎ Solana chain",
+        "small_txn_ratio": "📏 Organic txn sizes",
+        "market_cap_tier": "💰 Sweet spot mcap",
+        "token_age": "⏰ Optimal age window",
+        "social_mentions": "🗣 Social buzz",
+    }
     lines.append("")
-    lines.append("Signals: " + ", ".join(signals))
+    lines.append("Why:")
+    for sig in signals:
+        label = signal_labels.get(sig, sig)
+        lines.append(f"  {label}")
+
 
     # Virality
     if token.virality_class is not None:

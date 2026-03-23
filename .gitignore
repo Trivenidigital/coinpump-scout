@@ -10,3 +10,6 @@ build/
 *.egg
 .mypy_cache/
 *.png
+*.db-shm
+*.db-wal
+*.db

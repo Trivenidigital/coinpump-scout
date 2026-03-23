@@ -52,8 +52,8 @@ async def enrich_holders(
     if token.chain == "solana":
         # Rugcheck first (free, fast, no API key)
         token = await _enrich_rugcheck(token, session)
-        # Only call Helius if Rugcheck didn't provide holder data
-        if settings.HELIUS_API_KEY and token.holder_count <= 1:
+        # Call Helius if Rugcheck only returned capped data (free tier caps at ~20)
+        if settings.HELIUS_API_KEY and token.holder_count <= 20:
             token = await _enrich_solana_helius(token, session, settings)
         return token
     elif token.chain in MORALIS_CHAIN_MAP:
@@ -83,7 +83,7 @@ async def _enrich_rugcheck(
                 data = await resp.json()
 
             # Holder data
-            top_holders = data.get("topHolders", [])
+            top_holders = data.get("topHolders") or []
             if top_holders:
                 # Count holders (Rugcheck returns top 20, but the actual count is higher)
                 # Use len as minimum, real count is typically much higher
@@ -109,7 +109,7 @@ async def _enrich_rugcheck(
                     updates["deployer_supply_pct"] = insider_pct / 100.0
 
             # LP lock status from markets
-            markets = data.get("markets", [])
+            markets = data.get("markets") or []
             for market in markets:
                 lp = market.get("lp", {})
                 locked_pct = lp.get("lpLockedPct", 0)
@@ -119,7 +119,7 @@ async def _enrich_rugcheck(
 
             # Risk score
             risk_score = data.get("score", 0)
-            risks = [r.get("name", "") for r in data.get("risks", [])]
+            risks = [r.get("name", "") for r in (data.get("risks") or [])]
 
             if risks:
                 logger.debug(
@@ -148,8 +148,8 @@ async def _enrich_solana_helius(
     """Supplement with Helius data (transaction analysis, holder count if missing)."""
     updates: dict = {}
 
-    # Only fetch holder count from Helius if Rugcheck didn't provide it
-    if token.holder_count <= 1:
+    # Fetch holder count from Helius if Rugcheck didn't provide it or returned capped data
+    if token.holder_count <= 20:
         holder_count = await _helius_holder_count(token.contract_address, session, settings)
         if holder_count is not None and holder_count > token.holder_count:
             updates["holder_count"] = holder_count
@@ -176,22 +176,50 @@ async def _enrich_solana_helius(
 async def _helius_holder_count(
     mint: str, session: aiohttp.ClientSession, settings: Settings,
 ) -> int | None:
-    """Fetch holder count from Helius DAS API (getTokenAccounts)."""
+    """Fetch holder count from Helius DAS API (getTokenAccounts).
+
+    Paginates with limit=1000 per page. The 'total' field in the response
+    just mirrors the page limit, so we count actual accounts returned.
+    Stops early once we have enough to confirm the token is active (1000+).
+    """
     url = helius_rpc_url(settings.HELIUS_API_KEY)
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "holder-enrichment",
-        "method": "getTokenAccounts",
-        "params": {"mint": mint, "limit": 1000},
-    }
+    holder_count = 0
+    cursor = None
+    max_pages = 3  # Up to 3000 holders
+
     try:
-        data = await helius_request(session, "post", url, json=payload)
-        if data is None:
-            return None
-        return data.get("result", {}).get("total", 0)
+        for _ in range(max_pages):
+            payload = {
+                "jsonrpc": "2.0",
+                "id": "holder-enrichment",
+                "method": "getTokenAccounts",
+                "params": {
+                    "mint": mint,
+                    "limit": 1000,
+                    "options": {"showZeroBalance": False},
+                },
+            }
+            if cursor:
+                payload["params"]["cursor"] = cursor
+
+            data = await helius_request(session, "post", url, json=payload)
+            if data is None:
+                return holder_count if holder_count > 0 else None
+
+            result = data.get("result", {})
+            accounts = result.get("token_accounts", [])
+            holder_count += len(accounts)
+            cursor = result.get("cursor")
+
+            if not cursor or not accounts:
+                break
+
+            await asyncio.sleep(0.2)
+
+        return holder_count
     except Exception:
         logger.warning("Helius holder lookup failed", contract_address=mint, exc_info=True)
-        return None
+        return holder_count if holder_count > 0 else None
 
 
 async def _helius_txn_analysis(
@@ -241,13 +269,9 @@ async def _helius_txn_analysis(
     if unique_buyers > 0:
         result["unique_buyers_1h"] = unique_buyers
 
-    # BL-022: Top-3 wallet concentration
-    if wallet_volume:
-        total_vol = sum(wallet_volume.values())
-        if total_vol > 0:
-            top3 = wallet_volume.most_common(3)
-            top3_vol = sum(v for _, v in top3)
-            result["top3_wallet_concentration"] = top3_vol / total_vol
+    # BL-022: Top-3 wallet concentration — NOT computed here.
+    # Transaction volume concentration != holder concentration.
+    # This field should only be set by Rugcheck (actual holder data).
 
     # BL-024: Small transaction ratio
     # Organic = many small txns ($50-$500 equivalent in tokens)

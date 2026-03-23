@@ -1,8 +1,14 @@
-"""End-to-end test: smart money injection -> scout pipeline -> scored candidate."""
+"""End-to-end test: smart money injection -> scout pipeline -> scored candidate.
+
+Tests use a separate injections.db (mirrors production architecture where sniper
+writes to injections.db and scout reads from it).
+"""
 import pytest
 from collections import defaultdict
+
+import aiosqlite
+
 from scout.config import Settings
-from scout.db import Database
 from scout.scorer import score
 from scout.models import CandidateToken
 
@@ -19,37 +25,64 @@ def _settings(**overrides):
 
 @pytest.mark.asyncio
 async def test_injection_write_read_cycle(tmp_path):
-    """Simulate sniper writing injection -> scout reading it."""
-    db = Database(tmp_path / "scout.db")
-    await db.initialize()
-    # Simulate sniper writing injections
-    await db._conn.execute(
-        "INSERT OR IGNORE INTO smart_money_injections "
-        "(token_mint, wallet_address, tx_signature, source) VALUES (?, ?, ?, ?)",
-        ("mint_abc", "wallet1", "tx_001", "websocket"),
-    )
-    await db._conn.execute(
-        "INSERT OR IGNORE INTO smart_money_injections "
-        "(token_mint, wallet_address, tx_signature, source) VALUES (?, ?, ?, ?)",
-        ("mint_abc", "wallet2", "tx_002", "websocket"),
-    )
-    await db._conn.commit()
-    # Scout reads unprocessed (doesn't mark yet)
-    injections = await db.get_unprocessed_injections()
-    assert len(injections) == 2
-    # Group by token
-    wallets_per_token = defaultdict(set)
-    ids = []
-    for inj in injections:
-        wallets_per_token[inj["token_mint"]].add(inj["wallet_address"])
-        ids.append(inj["id"])
-    assert wallets_per_token["mint_abc"] == {"wallet1", "wallet2"}
-    # Mark as processed after successful DexScreener fetch
-    await db.mark_injections_processed(ids)
-    # Verify marked as processed
-    second_read = await db.get_unprocessed_injections()
-    assert len(second_read) == 0
-    await db.close()
+    """Simulate sniper writing injection to injections.db -> scout reading it."""
+    inj_path = str(tmp_path / "injections.db")
+    async with aiosqlite.connect(inj_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS smart_money_injections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_mint TEXT NOT NULL,
+                wallet_address TEXT NOT NULL,
+                tx_signature TEXT,
+                source TEXT DEFAULT 'websocket',
+                detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed INTEGER DEFAULT 0,
+                UNIQUE(token_mint, tx_signature)
+            );
+        """)
+        # Simulate sniper writing injections
+        await conn.execute(
+            "INSERT OR IGNORE INTO smart_money_injections "
+            "(token_mint, wallet_address, tx_signature, source) VALUES (?, ?, ?, ?)",
+            ("mint_abc", "wallet1", "tx_001", "websocket"),
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO smart_money_injections "
+            "(token_mint, wallet_address, tx_signature, source) VALUES (?, ?, ?, ?)",
+            ("mint_abc", "wallet2", "tx_002", "websocket"),
+        )
+        await conn.commit()
+
+        # Scout reads unprocessed
+        cursor = await conn.execute(
+            "SELECT id, token_mint, wallet_address FROM smart_money_injections WHERE processed = 0"
+        )
+        injections = [dict(r) for r in await cursor.fetchall()]
+        assert len(injections) == 2
+
+        # Group by token
+        wallets_per_token = defaultdict(set)
+        ids = []
+        for inj in injections:
+            wallets_per_token[inj["token_mint"]].add(inj["wallet_address"])
+            ids.append(inj["id"])
+        assert wallets_per_token["mint_abc"] == {"wallet1", "wallet2"}
+
+        # Mark as processed after successful DexScreener fetch
+        placeholders = ",".join("?" for _ in ids)
+        await conn.execute(
+            f"UPDATE smart_money_injections SET processed = 1 WHERE id IN ({placeholders})",
+            ids,
+        )
+        await conn.commit()
+
+        # Verify marked as processed
+        cursor = await conn.execute(
+            "SELECT id FROM smart_money_injections WHERE processed = 0"
+        )
+        second_read = await cursor.fetchall()
+        assert len(second_read) == 0
 
 
 @pytest.mark.asyncio

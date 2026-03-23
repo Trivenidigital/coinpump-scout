@@ -24,8 +24,8 @@ Scoring weights (must always document rationale):
 - on_coingecko: 8 points -- Listed on CoinGecko (strong CEX listing proxy)
 - multi_dex (dex_count >= 2): 5 points -- Traded on multiple DEXs (liquidity depth)
 
-Raw max: 224 points -> normalized to 0-100 scale (BL-016)
-Co-occurrence multiplier applied after normalization (BL-014)
+Raw max: 129 points (always-available signals) -> normalized to 0-100 scale (BL-016)
+Co-occurrence multiplier applied to raw points BEFORE normalization (BL-014, M1)
 
 Hard disqualifiers:
 - Liquidity < MIN_LIQUIDITY_USD -> score 0 (BL-010)
@@ -36,11 +36,11 @@ Hard disqualifiers:
 from scout.config import Settings
 from scout.models import CandidateToken
 
-# RAW_MAX reflects achievable max without Helius (disabled due to rate limiting).
-# Helius-dependent signals (holder_growth, unique_buyers, smart_money, whale_buys,
-# holder_gini, whale_txns, small_txn_ratio) are excluded from the denominator.
-# Update this if Helius is re-enabled or signals change.
-RAW_MAX = 154
+# RAW_MAX reflects achievable max without Helius and without conditional signals.
+# Excluded: Helius-dependent (holder_growth=25, unique_buyers=15, smart_money=10,
+# whale_buys=5, holder_gini=5, whale_txns=5, small_txn_ratio=5) and conditional
+# (score_velocity=10, social_mentions=15). Update if signals change.
+RAW_MAX = 129
 
 
 def score(
@@ -249,15 +249,15 @@ def score(
         points += 8
         signals.append("bullish_news")
 
-    # BL-016: Normalize raw sum to 0-100 scale
-    normalized = min(100, int(points * 100 / RAW_MAX))
-
-    # BL-014: Co-occurrence multiplier
+    # BL-014: Co-occurrence multiplier (applied to raw points BEFORE normalization)
     # Vol/liq alone is the most commonly gamed signal. Penalize when isolated.
     if vol_liq_fired and holder_growth_fired:
-        normalized = min(100, int(normalized * 1.2))
+        points = int(points * 1.2)
     elif vol_liq_fired and not holder_growth_fired:
-        normalized = int(normalized * 0.8)
+        points = int(points * 0.8)
+
+    # BL-016: Normalize raw sum to 0-100 scale
+    normalized = min(100, int(points * 100 / RAW_MAX))
 
     return (normalized, signals)
 

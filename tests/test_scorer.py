@@ -301,7 +301,7 @@ class TestCoOccurrenceMultiplier:
     """BL-014: Co-occurrence multiplier."""
 
     def test_vol_liq_and_holder_growth_bonus(self):
-        """Both firing -> 1.2x multiplier."""
+        """Both firing -> 1.2x multiplier applied to raw points before normalization."""
         token = _make_token(volume_24h_usd=160000, liquidity_usd=20000,
                             holder_growth_1h=25, market_cap_usd=999999,
                             token_age_days=30, chain="ethereum")
@@ -309,14 +309,13 @@ class TestCoOccurrenceMultiplier:
         assert "vol_liq_ratio" in signals
         assert "holder_growth" in signals
 
-        # Without multiplier: (30+25)*100/138 = 39
-        # With 1.2x: 39*1.2 = 47
-        raw = int((30 + 25) * 100 / RAW_MAX)
-        expected = min(100, int(raw * 1.2))
+        # M1: multiplier applied to raw points BEFORE normalization
+        raw_boosted = int((30 + 25) * 1.2)
+        expected = min(100, int(raw_boosted * 100 / RAW_MAX))
         assert points == expected
 
     def test_vol_liq_without_holder_growth_penalty(self):
-        """Vol/liq alone -> 0.8x penalty."""
+        """Vol/liq alone -> 0.8x penalty applied to raw points before normalization."""
         token = _make_token(volume_24h_usd=160000, liquidity_usd=20000,
                             holder_growth_1h=0, market_cap_usd=999999,
                             token_age_days=30, chain="ethereum")
@@ -324,8 +323,9 @@ class TestCoOccurrenceMultiplier:
         assert "vol_liq_ratio" in signals
         assert "holder_growth" not in signals
 
-        raw = int(30 * 100 / RAW_MAX)
-        expected = int(raw * 0.8)
+        # M1: multiplier applied to raw points BEFORE normalization
+        raw_penalized = int(30 * 0.8)
+        expected = int(raw_penalized * 100 / RAW_MAX)
         assert points == expected
 
 
@@ -516,24 +516,21 @@ class TestRawMax:
     """CR-001: RAW_MAX must stay in sync with the actual signal point totals."""
 
     def test_raw_max_matches_signal_sum(self):
-        """CR-001: RAW_MAX must match the actual sum of all max signal points."""
+        """H1: RAW_MAX must match the sum of always-available signal points.
+
+        Excluded: Helius-dependent (holder_growth, unique_buyers, smart_money,
+        whale_buys, holder_gini, whale_txns, small_txn_ratio) and conditional
+        (score_velocity, social_mentions).
+        """
+        # Signals always available without Helius or conditional data
         signal_max_points = {
             "vol_liq_ratio": 30,
             "market_cap_tier": 8,
-            "holder_growth": 25,
             "token_age": 10,
-            "social_mentions": 15,
             "buy_pressure": 15,
-            "score_velocity": 10,
-            "unique_buyers": 15,
             "solana_bonus": 5,
-            "small_txn_ratio": 5,
-            "smart_money_buys": 10,
-            "whale_buys": 5,
             "liquidity_locked": 10,
             "volume_spike_5x": 15,  # mutually exclusive with 3x
-            "holder_gini_healthy": 5,
-            "whale_txns_1h": 5,
             "has_twitter": 3,
             "has_telegram": 3,
             "has_github": 2,

@@ -38,8 +38,10 @@ class QualityGate:
             return self._reject(f"top3_concentration_{token.top3_wallet_concentration:.2f}", token)
 
         # Gate 3: unique buyers >= MIN_UNIQUE_BUYERS
-        if token.unique_buyers_1h < self.settings.MIN_UNIQUE_BUYERS:
-            return self._reject(f"unique_buyers_{token.unique_buyers_1h}", token)
+        # H3: Skip when HELIUS_API_KEY is not set (unique_buyers will always be 0)
+        if self.settings.HELIUS_API_KEY and self.settings.HELIUS_API_KEY.strip():
+            if token.unique_buyers_1h < self.settings.MIN_UNIQUE_BUYERS:
+                return self._reject(f"unique_buyers_{token.unique_buyers_1h}", token)
 
         # Gate 4: token age < MAX_TOKEN_AGE_HOURS
         if token.token_age_days * 24 > self.settings.MAX_TOKEN_AGE_HOURS:

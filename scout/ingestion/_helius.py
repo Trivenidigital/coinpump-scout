@@ -12,7 +12,7 @@ HELIUS_API = "https://api.helius.xyz/v0"
 
 # Single semaphore shared across ALL Helius callers (lazily initialized)
 _helius_semaphore: asyncio.Semaphore | None = None
-HELIUS_DELAY = 0.5
+HELIUS_DELAY = 0.2
 
 
 _helius_semaphore_loop: asyncio.AbstractEventLoop | None = None
@@ -23,7 +23,7 @@ def _get_helius_semaphore() -> asyncio.Semaphore:
     global _helius_semaphore, _helius_semaphore_loop
     loop = asyncio.get_running_loop()
     if _helius_semaphore is None or _helius_semaphore_loop is not loop:
-        _helius_semaphore = asyncio.Semaphore(1)
+        _helius_semaphore = asyncio.Semaphore(5)
         _helius_semaphore_loop = loop
     return _helius_semaphore
 

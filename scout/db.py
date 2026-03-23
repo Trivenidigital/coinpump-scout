@@ -1,5 +1,6 @@
 """Async SQLite database layer for CoinPump Scout."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -64,6 +65,7 @@ class Database:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         self._conn: aiosqlite.Connection | None = None
+        self._write_lock = asyncio.Lock()  # C4: serialize write operations
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -74,7 +76,8 @@ class Database:
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.execute("PRAGMA busy_timeout=5000")
+        await self._conn.execute("PRAGMA busy_timeout=10000")  # C4: increased from 5000
+        await self._conn.execute("PRAGMA synchronous=NORMAL")  # C4: reduce fsync overhead
         await self._create_tables()
 
     async def close(self) -> None:
@@ -86,7 +89,8 @@ class Database:
     async def commit(self) -> None:
         """Explicitly commit pending writes (use for batching high-frequency writes)."""
         if self._conn:
-            await self._conn.commit()
+            async with self._write_lock:
+                await self._conn.commit()
 
     # ------------------------------------------------------------------
     # Schema
@@ -245,18 +249,6 @@ class Database:
                 price_change_pct  REAL
             );
 
-            CREATE TABLE IF NOT EXISTS smart_money_injections (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                token_mint      TEXT NOT NULL,
-                wallet_address  TEXT NOT NULL,
-                tx_signature    TEXT,
-                source          TEXT DEFAULT 'websocket',
-                detected_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                processed       INTEGER DEFAULT 0,
-                UNIQUE(token_mint, tx_signature)
-            );
-            CREATE INDEX IF NOT EXISTS idx_smi_unprocessed
-                ON smart_money_injections(processed, detected_at);
             """
         )
 
@@ -281,14 +273,15 @@ class Database:
                 v = v.isoformat()
             values.append(v)
 
-        await self._conn.execute(
-            f"""INSERT INTO candidates ({cols}) VALUES ({placeholders})
-                ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
-            values,
-        )
-        # Commit immediately: candidates table is the primary persistence record.
-        # Analytics writes (log_score, log_holder_snapshot, etc.) remain batched.
-        await self._conn.commit()
+        async with self._write_lock:
+            await self._conn.execute(
+                f"""INSERT INTO candidates ({cols}) VALUES ({placeholders})
+                    ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
+                values,
+            )
+            # Commit immediately: candidates table is the primary persistence record.
+            # Analytics writes (log_score, log_holder_snapshot, etc.) remain batched.
+            await self._conn.commit()
 
     async def get_candidates_above_score(self, min_score: int) -> list[dict]:
         """Get candidates with quant_score >= min_score."""
@@ -313,11 +306,12 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
-            "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
-            (contract_address, chain, conviction_score, now, market_cap_usd),
-        )
-        await self._conn.commit()
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
+                (contract_address, chain, conviction_score, now, market_cap_usd),
+            )
+            await self._conn.commit()
 
     async def get_daily_alert_count(self) -> int:
         """Count alerts fired today (UTC)."""
@@ -372,32 +366,6 @@ class Database:
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
-    # MiroFish jobs
-    # ------------------------------------------------------------------
-
-    async def log_mirofish_job(self, contract_address: str) -> int:
-        """Log a MiroFish simulation job. Returns the row ID for rollback."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized. Call initialize() first.")
-        now = datetime.now(timezone.utc).isoformat()
-        cursor = await self._conn.execute(
-            "INSERT INTO mirofish_jobs (contract_address, created_at) VALUES (?, ?)",
-            (contract_address, now),
-        )
-        await self._conn.commit()
-        return cursor.lastrowid
-
-    async def rollback_mirofish_job(self, job_id: int) -> None:
-        """Remove a MiroFish job by exact row ID (rollback on failure)."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        await self._conn.execute(
-            "DELETE FROM mirofish_jobs WHERE id = ?",
-            (job_id,),
-        )
-        await self._conn.commit()
-
-    # ------------------------------------------------------------------
     # Score history (BL-013)
     # ------------------------------------------------------------------
 
@@ -406,10 +374,11 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
-            "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
-            (contract_address, score, now),
-        )
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO score_history (contract_address, score, scanned_at) VALUES (?, ?, ?)",
+                (contract_address, score, now),
+            )
         # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_recent_scores(self, contract_address: str, limit: int = 3) -> list[int]:
@@ -432,10 +401,11 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
-            "INSERT INTO holder_snapshots (contract_address, holder_count, recorded_at) VALUES (?, ?, ?)",
-            (contract_address, holder_count, now),
-        )
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO holder_snapshots (contract_address, holder_count, recorded_at) VALUES (?, ?, ?)",
+                (contract_address, holder_count, now),
+            )
         # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_previous_holder_count(self, contract_address: str) -> int | None:
@@ -461,10 +431,11 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
-            "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
-            (contract_address, volume_24h, now),
-        )
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO volume_history (contract_address, volume_24h, recorded_at) VALUES (?, ?, ?)",
+                (contract_address, volume_24h, now),
+            )
         # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_avg_volume(self, contract_address: str, lookback: int = 3) -> float | None:
@@ -504,31 +475,32 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
-            """INSERT INTO signal_snapshots
-               (scan_cycle, contract_address, chain, token_name, ticker,
-                token_age_days, market_cap_usd, liquidity_usd, volume_24h_usd,
-                holder_count, holder_growth_1h, buys_1h, sells_1h,
-                unique_buyers_1h, top3_wallet_concentration, deployer_supply_pct,
-                small_txn_ratio, social_mentions_24h,
-                quant_score, signals_fired, disqualified, disqualify_reason,
-                narrative_score, conviction_score, alerted, safe, scanned_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                scan_cycle,
-                token.contract_address, token.chain, token.token_name, token.ticker,
-                token.token_age_days, token.market_cap_usd, token.liquidity_usd,
-                token.volume_24h_usd, token.holder_count, token.holder_growth_1h,
-                token.buys_1h, token.sells_1h, token.unique_buyers_1h,
-                token.top3_wallet_concentration, token.deployer_supply_pct,
-                token.small_txn_ratio, token.social_mentions_24h,
-                quant_score, ",".join(signals_fired),
-                1 if disqualified else 0, disqualify_reason,
-                narrative_score, conviction_score,
-                1 if alerted else 0, (1 if safe else 0) if safe is not None else None,
-                now,
-            ),
-        )
+        async with self._write_lock:
+            await self._conn.execute(
+                """INSERT INTO signal_snapshots
+                   (scan_cycle, contract_address, chain, token_name, ticker,
+                    token_age_days, market_cap_usd, liquidity_usd, volume_24h_usd,
+                    holder_count, holder_growth_1h, buys_1h, sells_1h,
+                    unique_buyers_1h, top3_wallet_concentration, deployer_supply_pct,
+                    small_txn_ratio, social_mentions_24h,
+                    quant_score, signals_fired, disqualified, disqualify_reason,
+                    narrative_score, conviction_score, alerted, safe, scanned_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    scan_cycle,
+                    token.contract_address, token.chain, token.token_name, token.ticker,
+                    token.token_age_days, token.market_cap_usd, token.liquidity_usd,
+                    token.volume_24h_usd, token.holder_count, token.holder_growth_1h,
+                    token.buys_1h, token.sells_1h, token.unique_buyers_1h,
+                    token.top3_wallet_concentration, token.deployer_supply_pct,
+                    token.small_txn_ratio, token.social_mentions_24h,
+                    quant_score, ",".join(signals_fired),
+                    1 if disqualified else 0, disqualify_reason,
+                    narrative_score, conviction_score,
+                    1 if alerted else 0, (1 if safe else 0) if safe is not None else None,
+                    now,
+                ),
+            )
         # High-frequency: caller is responsible for batched commit() after the scoring loop.
 
     async def get_signal_snapshots(
@@ -552,18 +524,6 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-    async def get_daily_mirofish_count(self) -> int:
-        """Count MiroFish jobs run today (UTC)."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized. Call initialize() first.")
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        cursor = await self._conn.execute(
-            "SELECT COUNT(*) FROM mirofish_jobs WHERE date(created_at) = ?",
-            (today,),
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else 0
-
     # ------------------------------------------------------------------
     # Volume snapshots (quality gate)
     # ------------------------------------------------------------------
@@ -573,19 +533,25 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
-            "INSERT INTO vol_gate_snapshots (contract_address, vol_5min, recorded_at) VALUES (?, ?, ?)",
-            (contract_address, volume, now),
-        )
-        await self._conn.commit()
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO vol_gate_snapshots (contract_address, vol_5min, recorded_at) VALUES (?, ?, ?)",
+                (contract_address, volume, now),
+            )
+            await self._conn.commit()
 
     async def get_prev_vol_gate_snapshot(self, contract_address: str) -> float | None:
-        """Get the previous volume gate snapshot for acceleration comparison."""
+        """Get the previous volume gate snapshot for acceleration comparison.
+
+        H5: Uses time-based cutoff (at least 1 minute old) instead of OFFSET 1,
+        which is unstable when rows are inserted/deleted between queries.
+        """
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
         cursor = await self._conn.execute(
-            "SELECT vol_5min FROM vol_gate_snapshots WHERE contract_address=? ORDER BY recorded_at DESC LIMIT 1 OFFSET 1",
-            (contract_address,),
+            "SELECT vol_5min FROM vol_gate_snapshots WHERE contract_address=? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
+            (contract_address, cutoff),
         )
         row = await cursor.fetchone()
         return float(row[0]) if row else None
@@ -609,56 +575,6 @@ class Database:
     # Data retention
     # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Smart money injections
-    # ------------------------------------------------------------------
-
-    async def get_unprocessed_injections(self) -> list[dict]:
-        """Read unprocessed smart money injections WITHOUT marking them."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        cursor = await self._conn.execute(
-            "SELECT id, token_mint, wallet_address, tx_signature, source, detected_at "
-            "FROM smart_money_injections WHERE processed = 0"
-        )
-        return [dict(row) for row in await cursor.fetchall()]
-
-    async def mark_injections_processed(self, ids: list[int]) -> None:
-        """Mark specific injection IDs as processed."""
-        if not ids or self._conn is None:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        await self._conn.execute(
-            f"UPDATE smart_money_injections SET processed = 1 WHERE id IN ({placeholders})",
-            ids,
-        )
-        await self._conn.commit()
-
-    async def get_oldest_unprocessed_injection_age_seconds(self) -> float | None:
-        """Get age in seconds of the oldest unprocessed injection, or None if none exist."""
-        if self._conn is None:
-            return None
-        cursor = await self._conn.execute(
-            "SELECT MIN(detected_at) FROM smart_money_injections WHERE processed = 0"
-        )
-        row = await cursor.fetchone()
-        if not row or not row[0]:
-            return None
-        from datetime import datetime, timezone
-        oldest = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - oldest).total_seconds()
-
-    async def cleanup_old_injections(self, days: int = 7) -> int:
-        """Delete processed injections older than N days. Returns count deleted."""
-        if self._conn is None:
-            raise RuntimeError("Database not initialized.")
-        cursor = await self._conn.execute(
-            "DELETE FROM smart_money_injections WHERE processed = 1 AND detected_at < datetime('now', ?)",
-            (f"-{days} days",),
-        )
-        await self._conn.commit()
-        return cursor.rowcount
-
     async def prune_old_data(self, retention_days: int = 30) -> None:
         """Delete time-series data older than retention_days.
 
@@ -670,15 +586,16 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized.")
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-        for table, col in [
-            ("score_history", "scanned_at"),
-            ("holder_snapshots", "recorded_at"),
-            ("volume_history", "recorded_at"),
-            ("vol_gate_snapshots", "recorded_at"),
-            ("signal_snapshots", "scanned_at"),
-        ]:
-            await self._conn.execute(
-                f"DELETE FROM {table} WHERE {col} < ?",
-                (cutoff,),
-            )
-        await self._conn.commit()
+        async with self._write_lock:
+            for table, col in [
+                ("score_history", "scanned_at"),
+                ("holder_snapshots", "recorded_at"),
+                ("volume_history", "recorded_at"),
+                ("vol_gate_snapshots", "recorded_at"),
+                ("signal_snapshots", "scanned_at"),
+            ]:
+                await self._conn.execute(
+                    f"DELETE FROM {table} WHERE {col} < ?",
+                    (cutoff,),
+                )
+            await self._conn.commit()

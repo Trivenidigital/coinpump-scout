@@ -46,10 +46,8 @@ class Settings(BaseSettings):
     # Well-known addresses (Solana)
     USDC_MINT_SOLANA: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-    # MiroFish
-    MIROFISH_URL: str = "http://localhost:5001"
-    MIROFISH_TIMEOUT_SEC: int = 180
-    MAX_MIROFISH_JOBS_PER_DAY: int = 50
+    # Quant-only conviction: higher threshold when narrative is unavailable (M3)
+    QUANT_ONLY_CONVICTION_THRESHOLD: int = 50
 
     # Alerts
     TELEGRAM_BOT_TOKEN: str
@@ -90,6 +88,7 @@ class Settings(BaseSettings):
 
     # Database
     DB_PATH: Path = Path("scout.db")
+    INJECTIONS_DB_PATH: Path = Path("injections.db")
 
     # Claude fallback
     ANTHROPIC_API_KEY: str

@@ -83,7 +83,7 @@ async def _enrich_rugcheck(
                 data = await resp.json()
 
             # Holder data
-            top_holders = data.get("topHolders", [])
+            top_holders = data.get("topHolders") or []
             if top_holders:
                 # Count holders (Rugcheck returns top 20, but the actual count is higher)
                 # Use len as minimum, real count is typically much higher
@@ -109,7 +109,7 @@ async def _enrich_rugcheck(
                     updates["deployer_supply_pct"] = insider_pct / 100.0
 
             # LP lock status from markets
-            markets = data.get("markets", [])
+            markets = data.get("markets") or []
             for market in markets:
                 lp = market.get("lp", {})
                 locked_pct = lp.get("lpLockedPct", 0)
@@ -119,7 +119,7 @@ async def _enrich_rugcheck(
 
             # Risk score
             risk_score = data.get("score", 0)
-            risks = [r.get("name", "") for r in data.get("risks", [])]
+            risks = [r.get("name", "") for r in (data.get("risks") or [])]
 
             if risks:
                 logger.debug(

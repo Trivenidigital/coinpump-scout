@@ -269,13 +269,9 @@ async def _helius_txn_analysis(
     if unique_buyers > 0:
         result["unique_buyers_1h"] = unique_buyers
 
-    # BL-022: Top-3 wallet concentration
-    if wallet_volume:
-        total_vol = sum(wallet_volume.values())
-        if total_vol > 0:
-            top3 = wallet_volume.most_common(3)
-            top3_vol = sum(v for _, v in top3)
-            result["top3_wallet_concentration"] = top3_vol / total_vol
+    # BL-022: Top-3 wallet concentration — NOT computed here.
+    # Transaction volume concentration != holder concentration.
+    # This field should only be set by Rugcheck (actual holder data).
 
     # BL-024: Small transaction ratio
     # Organic = many small txns ($50-$500 equivalent in tokens)

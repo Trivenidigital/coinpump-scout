@@ -542,3 +542,41 @@ class TestRawMax:
         }
         expected_max = sum(signal_max_points.values())
         assert RAW_MAX == expected_max, f"RAW_MAX={RAW_MAX} but signal sum={expected_max}"
+
+
+class TestEntryTiming:
+    """Tests for entry timing signals (volume_accelerating, already_peaked, runup block)."""
+
+    def test_already_peaked_penalty(self):
+        token = _make_token(price_change_5m=-10, price_change_1h=60, liquidity_usd=20000)
+        s, signals = score(token, _settings())
+        assert "already_peaked" in signals
+
+    def test_already_peaked_no_penalty_when_1h_low(self):
+        """No penalty if 1h gain is modest — normal dip, not a peaked token."""
+        token = _make_token(price_change_5m=-10, price_change_1h=20, liquidity_usd=20000)
+        s, signals = score(token, _settings())
+        assert "already_peaked" not in signals
+
+    def test_volume_accelerating(self):
+        token = _make_token(volume_5m_usd=1000, volume_1h_usd=3000, liquidity_usd=20000)
+        s, signals = score(token, _settings())
+        assert "volume_accelerating" in signals
+
+    def test_volume_not_accelerating(self):
+        """Normal volume pace — no bonus."""
+        token = _make_token(volume_5m_usd=200, volume_1h_usd=3000, liquidity_usd=20000)
+        s, signals = score(token, _settings())
+        assert "volume_accelerating" not in signals
+
+    def test_runup_hard_block(self):
+        token = _make_token(market_cap_usd=400_000, price_change_24h=350, liquidity_usd=20000)
+        s, signals = score(token, _settings())
+        assert s == 0
+        assert signals == []
+
+    def test_runup_no_block_under_cap(self):
+        """Under mcap cap — no block even with big 24h gain."""
+        token = _make_token(market_cap_usd=200_000, price_change_24h=350, liquidity_usd=20000)
+        s, signals = score(token, _settings())
+        assert s > 0

@@ -26,7 +26,7 @@ Scoring weights (must always document rationale):
 - volume_accelerating: 10 points -- 5m volume > 2x average 5m pace (entry timing)
 
 Anti-signals (subtractive, not in RAW_MAX):
-- volume_exhausting: -20 points -- pumped 100%+ in 1h but volume dying (< 30% of pace)
+- already_peaked: -20 points -- 5m price dropping >5% while 1h up >50% (buying the top)
 
 Raw max: 139 points (always-available signals) -> normalized to 0-100 scale (BL-016)
 Co-occurrence multiplier applied to raw points BEFORE normalization (BL-014, M1)
@@ -259,15 +259,12 @@ def score(
         points += 8
         signals.append("bullish_news")
 
-    # Anti-signal: volume dying after a pump (not just price dipping)
-    # Token pumped 100%+ in 1h but 5m volume is < 30% of hourly average pace
-    # = pump exhausting, sellers taking over — avoid late entry
+    # Anti-signal: token already peaked and reversing
+    # Price falling in last 5m but already up big in 1h = buying the top
     if settings.ENTRY_PEAK_PENALTY_ENABLED:
-        if token.price_change_1h > 100 and token.volume_1h_usd > 0 and token.volume_5m_usd > 0:
-            avg_5m_pace = token.volume_1h_usd / 12
-            if token.volume_5m_usd < avg_5m_pace * 0.3:
-                points -= 20
-                signals.append("volume_exhausting")
+        if token.price_change_5m < -5 and token.price_change_1h > 50:
+            points -= 20
+            signals.append("already_peaked")
 
     # Volume acceleration: 5m volume disproportionately high vs 1h pace
     if token.volume_1h_usd > 0 and token.volume_5m_usd > 0:

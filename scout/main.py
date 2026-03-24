@@ -34,7 +34,10 @@ from scout.scorer import score
 logger = structlog.get_logger()
 
 async def _sniper_has_position(contract_address: str, settings: Settings) -> bool:
-    """Check if the sniper bot has an open position for this token.
+    """Check if the sniper bot has or recently had a position for this token.
+
+    Returns True if there's an open position OR a position closed within
+    the last 4 hours. This prevents buy-sell-realert loops.
 
     Opens a short-lived read-only connection to the sniper DB.
     Returns False on any error (fail-open — don't block re-alerts).
@@ -43,7 +46,11 @@ async def _sniper_has_position(contract_address: str, settings: Settings) -> boo
         db_uri = f"file:{settings.SNIPER_DB_PATH}?mode=ro"
         async with aiosqlite.connect(db_uri, uri=True) as conn:
             cursor = await conn.execute(
-                "SELECT 1 FROM positions WHERE contract_address = ? AND status = 'open' LIMIT 1",
+                "SELECT 1 FROM positions WHERE contract_address = ? "
+                "AND (status = 'open' OR "
+                "     (status = 'closed' AND "
+                "      datetime(closed_at) > datetime('now', '-4 hours'))) "
+                "LIMIT 1",
                 (contract_address,),
             )
             row = await cursor.fetchone()

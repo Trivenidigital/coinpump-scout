@@ -14,21 +14,44 @@ def build_seed(token: CandidateToken, signals_fired: list[str] | None = None) ->
     the narrative simulation with quantitative context.
     """
     age_hours = int(token.token_age_days * 24)
-    social = f"{token.social_mentions_24h} mentions in 24h" if token.social_mentions_24h > 0 else "None detected"
-    concept_description = f"{token.token_name} ({token.ticker}) is a {token.chain} token"
 
     signals = signals_fired or []
     signal_confidence = confidence(signals)
 
+    social_str = (
+        f"{token.social_mentions_24h} mentions in 24h"
+        if token.social_mentions_24h > 0
+        else "no social data available"
+    )
+    community_str = ", ".join(filter(None, [
+        "Twitter" if token.has_twitter else "",
+        "Telegram" if token.has_telegram else "",
+        "GitHub" if token.has_github else "",
+    ])) or "no community links"
+    news_str = (
+        f"{token.news_mentions} news mentions, "
+        f"{'bullish' if token.news_sentiment > 0.3 else 'neutral/bearish'} sentiment"
+        if token.has_news
+        else "no news coverage"
+    )
+
     prompt = (
-        f"Token: {token.token_name} ({token.ticker}) on {token.chain}. "
-        f"Concept: {concept_description}. "
-        f"Market cap: ${token.market_cap_usd}. "
-        f"First seen: {age_hours}h ago. "
-        f"Early social signals: {social}. "
-        f"Signal confidence: {signal_confidence} ({len(signals)} signals firing: {', '.join(signals) or 'none'}). "
-        f"Predict: will this narrative spread organically through crypto Twitter "
-        f"and Telegram communities over the next 24 hours?"
+        f"Crypto token: '{token.token_name}' (ticker: {token.ticker}) "
+        f"on {token.chain}.\n"
+        f"Market cap: ${token.market_cap_usd:,.0f}. "
+        f"Age: {age_hours}h old.\n"
+        f"Community presence: {community_str}.\n"
+        f"Social signals: {social_str}.\n"
+        f"News: {news_str}.\n"
+        f"On-chain signal strength: {signal_confidence} "
+        f"({len(signals)} signals: {', '.join(signals) or 'none'}).\n\n"
+        f"Score ONLY the NARRATIVE and MEME potential of this token's "
+        f"NAME and CONCEPT. Ask yourself:\n"
+        f"- Is '{token.token_name}' funny, creative, or culturally relevant?\n"
+        f"- Does it tap into a current trend, meme, or community movement?\n"
+        f"- Would crypto Twitter organically share or discuss this?\n"
+        f"- Does the name have viral or community appeal?\n"
+        f"Ignore on-chain signals entirely — score the NAME/CONCEPT only."
     )
 
     return {
@@ -37,8 +60,9 @@ def build_seed(token: CandidateToken, signals_fired: list[str] | None = None) ->
         "chain": token.chain,
         "market_cap": token.market_cap_usd,
         "age_hours": age_hours,
-        "concept_description": concept_description,
-        "social_snippets": social,
+        "community": community_str,
+        "social": social_str,
+        "news": news_str,
         "signal_confidence": signal_confidence,
         "signals_fired": signals,
         "prompt": prompt,

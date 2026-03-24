@@ -44,6 +44,13 @@ class CandidateToken(BaseModel):
     small_txn_ratio: float = 0.0
     social_score: float = 0.0
 
+    # Entry timing fields
+    price_change_5m: float = 0.0
+    price_change_1h: float = 0.0
+    price_change_24h: float = 0.0
+    volume_5m_usd: float = 0.0
+    volume_1h_usd: float = 0.0
+
     # On-chain signal enrichment fields
     smart_money_buys: int = 0
     whale_buys: int = 0
@@ -119,6 +126,11 @@ class CandidateToken(BaseModel):
             holder_growth_1h=0,
             buys_1h=buys_1h,
             sells_1h=sells_1h,
+            price_change_5m=float((data.get("priceChange") or {}).get("m5") or 0),
+            price_change_1h=float((data.get("priceChange") or {}).get("h1") or 0),
+            price_change_24h=float((data.get("priceChange") or {}).get("h24") or 0),
+            volume_5m_usd=float((data.get("volume") or {}).get("m5") or 0),
+            volume_1h_usd=float((data.get("volume") or {}).get("h1") or 0),
         )
 
     @classmethod

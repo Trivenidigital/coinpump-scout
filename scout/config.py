@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     SMART_MONEY_WALLETS: str = ""  # Comma-separated tracked wallet addresses
     SMART_MONEY_BOOST_CAP: int = 80  # Max total smart money score boost
 
+    # Entry timing
+    ENTRY_PEAK_PENALTY_ENABLED: bool = True
+    ENTRY_MCAP_RUNUP_BLOCK: float = 300.0  # % 24h gain to block
+    ENTRY_MCAP_RUNUP_CAP: float = 300_000  # mcap threshold for runup block
+
     # Safety
     GOPLUS_FAIL_CLOSED: bool = True  # False = fail open on unknown tokens (allows new tokens GoPlus hasn't indexed)
 

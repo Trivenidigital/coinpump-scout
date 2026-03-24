@@ -167,12 +167,17 @@ async def run_cycle(
 
     stats["tokens_scanned"] = len(all_candidates)
 
-    # C1: Concurrent holder enrichment with semaphore to respect Helius rate limits
+    # Stage 2b: Lightweight Rugcheck-only holder enrichment for ALL candidates
+    # Helius calls are deferred to post-scoring to conserve API credits
     holder_sem = asyncio.Semaphore(5)
+
+    # Temporarily blank Helius key for initial enrichment pass (Rugcheck only)
+    _real_helius_key = settings.HELIUS_API_KEY
+    settings_lite = settings.model_copy(update={"HELIUS_API_KEY": ""})
 
     async def _enrich_one(token):
         async with holder_sem:
-            return await enrich_holders(token, session, settings)
+            return await enrich_holders(token, session, settings_lite)
 
     enriched = list(await asyncio.gather(*[_enrich_one(t) for t in all_candidates]))
 
@@ -185,24 +190,76 @@ async def run_cycle(
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
 
-    # Stage 2c: On-chain signal enrichment (C1: concurrent with semaphore)
-    if settings.ONCHAIN_SIGNALS_ENABLED:
-        onchain_sem = asyncio.Semaphore(3)
+    # Stage 3: First-pass score (without Helius signals) to filter candidates
+    pre_scored = []
+    for token in enriched:
+        previous_scores = await db.get_recent_scores(token.contract_address)
+        points, signals = score(token, settings, previous_scores=previous_scores)
+        await db.log_score(token.contract_address, points)
+        updated = token.model_copy(update={"quant_score": points})
+        if points >= settings.MIN_SCORE:
+            pre_scored.append((updated, signals))
+        else:
+            await db.upsert_candidate(updated)
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle, token=updated,
+                quant_score=points, signals_fired=signals,
+                disqualified=points == 0,
+            )
+        await db.commit()
 
-        async def _enrich_onchain(token):
-            async with onchain_sem:
-                return await enrich_onchain_signals(token, session, db, settings)
+    # Stage 3a: Deep Helius enrichment ONLY for tokens passing MIN_SCORE
+    # This reduces Helius calls from ~30-40/cycle to ~5-15/cycle
+    if _real_helius_key and pre_scored:
+        settings_full = settings.model_copy(update={"HELIUS_API_KEY": _real_helius_key})
 
-        enriched = list(await asyncio.gather(*[_enrich_onchain(t) for t in enriched]))
+        async def _deep_enrich(token):
+            async with holder_sem:
+                enriched_token = await enrich_holders(token, session, settings_full)
+                # Compute holder growth for newly enriched data
+                if enriched_token.holder_count > token.holder_count:
+                    prev = await db.get_previous_holder_count(token.contract_address)
+                    await db.log_holder_snapshot(token.contract_address, enriched_token.holder_count)
+                    if prev is not None:
+                        growth = enriched_token.holder_count - prev
+                        enriched_token = enriched_token.model_copy(
+                            update={"holder_growth_1h": max(0, growth)}
+                        )
+                return enriched_token
 
-    # Data quality alert — catch dead signals
+        deep_enriched = list(await asyncio.gather(
+            *[_deep_enrich(t) for t, _ in pre_scored]
+        ))
+
+        # On-chain signal enrichment (Helius-powered)
+        if settings.ONCHAIN_SIGNALS_ENABLED:
+            onchain_sem = asyncio.Semaphore(3)
+
+            async def _enrich_onchain(token):
+                async with onchain_sem:
+                    return await enrich_onchain_signals(token, session, db, settings_full)
+
+            deep_enriched = list(await asyncio.gather(
+                *[_enrich_onchain(t) for t in deep_enriched]
+            ))
+
+        logger.info(
+            "Helius deep enrichment complete",
+            tokens_enriched=len(deep_enriched),
+        )
+
+        # Replace pre_scored tokens with deeply enriched versions
+        pre_scored = list(zip(deep_enriched, [s for _, s in pre_scored]))
+
+    # Data quality alert — check enriched tokens for dead signals
+    check_pool = [t for t, _ in pre_scored] if pre_scored else enriched
     dead_signals: list[str] = []
-    total = len(enriched)
+    total = len(check_pool)
     if total > 0:
-        has_holder_count = sum(1 for t in enriched if t.holder_count > 20)
-        has_holder_growth = sum(1 for t in enriched if t.holder_growth_1h > 0)
-        has_unique_buyers = sum(1 for t in enriched if t.unique_buyers_1h > 0)
-        has_whale_buys = sum(1 for t in enriched if t.whale_buys > 0)
+        has_holder_count = sum(1 for t in check_pool if t.holder_count > 20)
+        has_holder_growth = sum(1 for t in check_pool if t.holder_growth_1h > 0)
+        has_unique_buyers = sum(1 for t in check_pool if t.unique_buyers_1h > 0)
+        has_whale_buys = sum(1 for t in check_pool if t.whale_buys > 0)
 
         if has_holder_count == 0:
             dead_signals.append("holder_count (all capped at 20)")
@@ -220,9 +277,9 @@ async def run_cycle(
                 tokens_checked=total,
             )
 
-    # Stage 3: Score
+    # Stage 3b: Re-score with Helius signals for deep-enriched tokens
     scored = []
-    for token in enriched:
+    for token, old_signals in pre_scored:
         previous_scores = await db.get_recent_scores(token.contract_address)
         points, signals = score(token, settings, previous_scores=previous_scores)
         await db.log_score(token.contract_address, points)

@@ -33,6 +33,25 @@ from scout.scorer import score
 
 logger = structlog.get_logger()
 
+async def _sniper_has_position(contract_address: str, settings: Settings) -> bool:
+    """Check if the sniper bot has an open position for this token.
+
+    Opens a short-lived read-only connection to the sniper DB.
+    Returns False on any error (fail-open — don't block re-alerts).
+    """
+    try:
+        db_uri = f"file:{settings.SNIPER_DB_PATH}?mode=ro"
+        async with aiosqlite.connect(db_uri, uri=True) as conn:
+            cursor = await conn.execute(
+                "SELECT 1 FROM positions WHERE contract_address = ? AND status = 'open' LIMIT 1",
+                (contract_address,),
+            )
+            row = await cursor.fetchone()
+            return row is not None
+    except Exception:
+        return False  # Fail-open: if sniper DB unreachable, allow re-alert
+
+
 async def run_cycle(
     settings: Settings,
     db: Database,
@@ -295,11 +314,14 @@ async def run_cycle(
             continue
 
         # Dedup: skip if already alerted recently
-        # Exception: high conviction + profitable exit + 20% dip = allow re-entry
+        # Exceptions:
+        #   1. High conviction + mcap dip = allow re-entry
+        #   2. Missed trade recovery: sniper didn't buy, enough time passed
         should_skip = False  # C2: initialize before conditional block
         if await db.was_recently_alerted(gated_token.contract_address):
             should_skip = True
 
+            # Exception 1: dip-based re-entry
             if conviction >= settings.REENTRY_MIN_CONVICTION:
                 last_exit = await db.get_last_alert_mcap(gated_token.contract_address)
                 if last_exit is not None:
@@ -314,6 +336,28 @@ async def run_cycle(
                                 token=gated_token.token_name,
                                 conviction=conviction,
                                 dip_pct=f"{dip_pct:.1f}%",
+                            )
+
+            # Exception 2: missed trade recovery
+            if should_skip and conviction >= settings.CONVICTION_THRESHOLD:
+                sniper_has_position = await _sniper_has_position(
+                    gated_token.contract_address, settings,
+                )
+                if not sniper_has_position:
+                    last_alert_time = await db.get_last_alert_time(
+                        gated_token.contract_address,
+                    )
+                    if last_alert_time is not None:
+                        hours_since = (
+                            datetime.now(timezone.utc) - last_alert_time
+                        ).total_seconds() / 3600
+                        if hours_since >= settings.MISSED_TRADE_RECHECK_HOURS:
+                            should_skip = False
+                            logger.info(
+                                "Re-alerting missed trade — sniper did not buy",
+                                token=gated_token.token_name,
+                                conviction=conviction,
+                                hours_since_last=f"{hours_since:.1f}h",
                             )
 
             if should_skip:

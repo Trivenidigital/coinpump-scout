@@ -363,6 +363,20 @@ class Database:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def get_last_alert_time(self, contract_address: str) -> datetime | None:
+        """Get the timestamp of the most recent alert for a token."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        cursor = await self._conn.execute(
+            "SELECT alerted_at FROM alerts WHERE contract_address = ? "
+            "ORDER BY alerted_at DESC LIMIT 1",
+            (contract_address,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return datetime.fromisoformat(row[0])
+        return None
+
     async def get_recent_alerts(self, days: int = 30) -> list[dict]:
         """Get alerts from the last N days."""
         if self._conn is None:

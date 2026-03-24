@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     REENTRY_MIN_CONVICTION: float = 40.0  # Min conviction to allow re-entry
     REENTRY_DIP_PCT: float = 20.0         # Must dip 20% from exit mcap
 
+    # Missed trade recovery
+    SNIPER_DB_PATH: str = "/opt/sniper/sniper.db"
+    MISSED_TRADE_RECHECK_HOURS: int = 2   # Min hours before re-alerting missed trades
+
     # Birdeye (optional — Solana token data)
     BIRDEYE_API_KEY: str = ""
 

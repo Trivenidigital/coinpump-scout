@@ -344,6 +344,7 @@ async def run_cycle(
             await db.log_alert(
                 gated_token.contract_address, gated_token.chain, conviction,
                 market_cap_usd=gated_token.market_cap_usd or 0,
+                liquidity_usd=gated_token.liquidity_usd or 0,
             )
             stats["alerts_fired"] += 1
 

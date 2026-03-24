@@ -151,7 +151,8 @@ class Database:
                 chain             TEXT NOT NULL,
                 conviction_score  REAL NOT NULL,
                 alerted_at        TEXT NOT NULL,
-                market_cap_usd    REAL DEFAULT 0
+                market_cap_usd    REAL DEFAULT 0,
+                liquidity_usd     REAL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_alerts_contract
@@ -251,6 +252,14 @@ class Database:
 
             """
         )
+        # Migrations for existing databases
+        try:
+            await self._conn.execute(
+                "ALTER TABLE alerts ADD COLUMN liquidity_usd REAL DEFAULT 0"
+            )
+            await self._conn.commit()
+        except Exception:
+            pass  # Column already exists
 
     # ------------------------------------------------------------------
     # Candidates
@@ -300,16 +309,16 @@ class Database:
 
     async def log_alert(
         self, contract_address: str, chain: str, conviction_score: float,
-        market_cap_usd: float = 0,
+        market_cap_usd: float = 0, liquidity_usd: float = 0,
     ) -> None:
-        """Log a fired alert with market cap snapshot for re-entry logic."""
+        """Log a fired alert with market cap and liquidity snapshot."""
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         now = datetime.now(timezone.utc).isoformat()
         async with self._write_lock:
             await self._conn.execute(
-                "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
-                (contract_address, chain, conviction_score, now, market_cap_usd),
+                "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd, liquidity_usd) VALUES (?, ?, ?, ?, ?, ?)",
+                (contract_address, chain, conviction_score, now, market_cap_usd, liquidity_usd),
             )
             await self._conn.commit()
 

@@ -15,9 +15,10 @@ SAMPLE_SEED = {
     "chain": "solana",
     "market_cap": 50000,
     "age_hours": 60,
-    "concept_description": "A meme token",
-    "social_snippets": "None detected",
-    "prompt": "Token: TestCoin (TST) on solana. Predict: will this narrative spread?",
+    "community": "no community links",
+    "social": "no social data available",
+    "news": "no news coverage",
+    "prompt": "Crypto token: 'TestCoin' (ticker: TST) on solana.\nScore ONLY the NARRATIVE and MEME potential.",
 }
 
 

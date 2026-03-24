@@ -28,10 +28,10 @@ def test_build_seed_returns_required_keys():
     assert "chain" in seed
     assert "market_cap" in seed
     assert "age_hours" in seed
-    assert "concept_description" in seed
-    assert "social_snippets" in seed
+    assert "community" in seed
+    assert "social" in seed
+    assert "news" in seed
     assert "prompt" in seed
-    # BL-015: new fields
     assert "signal_confidence" in seed
     assert "signals_fired" in seed
 
@@ -47,15 +47,18 @@ def test_build_seed_values():
     assert seed["market_cap"] == 100000
 
 
-def test_build_seed_prompt_format():
+def test_build_seed_prompt_scores_name_concept():
     token = _make_token(token_name="TestCoin", ticker="TST", chain="solana",
                          market_cap_usd=50000)
     seed = build_seed(token)
 
     prompt = seed["prompt"]
-    assert "Token: TestCoin (TST) on solana" in prompt
-    assert "Market cap: $50000" in prompt
-    assert "Predict: will this narrative spread organically" in prompt
+    assert "'TestCoin'" in prompt
+    assert "TST" in prompt
+    assert "solana" in prompt
+    assert "$50,000" in prompt
+    assert "Score ONLY the NARRATIVE and MEME potential" in prompt
+    assert "Is 'TestCoin' funny, creative, or culturally relevant?" in prompt
 
 
 def test_build_seed_age_hours():
@@ -67,7 +70,25 @@ def test_build_seed_age_hours():
 def test_build_seed_no_social_mentions():
     token = _make_token(social_mentions_24h=0)
     seed = build_seed(token)
-    assert seed["social_snippets"] == "None detected"
+    assert seed["social"] == "no social data available"
+
+
+def test_build_seed_with_social():
+    token = _make_token(social_mentions_24h=120)
+    seed = build_seed(token)
+    assert seed["social"] == "120 mentions in 24h"
+
+
+def test_build_seed_community_links():
+    token = _make_token(has_twitter=True, has_telegram=True, has_github=False)
+    seed = build_seed(token)
+    assert seed["community"] == "Twitter, Telegram"
+
+
+def test_build_seed_no_community():
+    token = _make_token(has_twitter=False, has_telegram=False, has_github=False)
+    seed = build_seed(token)
+    assert seed["community"] == "no community links"
 
 
 def test_build_seed_with_signals():
@@ -78,8 +99,8 @@ def test_build_seed_with_signals():
 
     assert seed["signal_confidence"] == "HIGH"
     assert seed["signals_fired"] == signals
-    assert "Signal confidence: HIGH" in seed["prompt"]
-    assert "3 signals firing" in seed["prompt"]
+    assert "HIGH" in seed["prompt"]
+    assert "3 signals" in seed["prompt"]
 
 
 def test_build_seed_without_signals():

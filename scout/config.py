@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     MAX_CANDIDATES_PER_CYCLE: int = 50
 
     # Token filters
-    MIN_MARKET_CAP: float = 10_000
+    MIN_MARKET_CAP: float = 5_000  # Lowered from 10K — liquidity check is the real protection
     MAX_MARKET_CAP: float = 500_000
     MAX_TOKEN_AGE_DAYS: int = 7
     MIN_VOL_LIQ_RATIO: float = 5.0
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     MIN_UNIQUE_BUYERS: int = 10
     MAX_TOP3_CONCENTRATION: float = 40.0  # percentage
     MAX_DEPLOYER_SUPPLY_PCT: float = 20.0  # percentage
-    MIN_TOKEN_AGE_MINUTES: int = 10  # Block tokens < 10min old (rug bait window)
+    MIN_TOKEN_AGE_MINUTES: int = 0  # Removed — Helius bundle check works best on fresh tokens
     MAX_TOKEN_AGE_HOURS: int = 24
     MIN_HOLDER_GROWTH_PER_HOUR: int = 5
 

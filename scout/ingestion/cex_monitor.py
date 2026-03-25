@@ -65,8 +65,12 @@ async def _verify_contract(
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
-                # Can't verify — accept the match
-                return True
+                # Can't verify — fail closed, deny the match
+                logger.debug(
+                    "CoinGecko contract verify failed — non-200",
+                    coin_id=coin_id, status=resp.status,
+                )
+                return False
             data = await resp.json()
             platforms = data.get("platforms", {})
             # Check if our contract address matches any platform
@@ -75,9 +79,13 @@ async def _verify_contract(
                     return True
             # No matching address found — this is a different token
             return False
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        # On error, accept the match (fail open for non-safety check)
-        return True
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        # Fail closed — unknown verification must not grant +8 points
+        logger.debug(
+            "CoinGecko contract verify failed — HTTP/timeout error",
+            coin_id=coin_id, error=str(exc),
+        )
+        return False
 
 
 async def check_cex_listing(

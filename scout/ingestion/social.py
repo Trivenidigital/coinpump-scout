@@ -17,6 +17,7 @@ import aiohttp
 import structlog
 
 from scout.config import Settings
+from scout.ingestion._dexscreener_cache import get_cached, set_cached
 from scout.models import CandidateToken
 
 logger = structlog.get_logger()
@@ -154,26 +155,31 @@ async def _fetch_dexscreener_socials(
     Returns a list of social link dicts, e.g. [{"type": "twitter", "url": "..."}].
     Returns empty list on failure.
     """
-    url = f"{_DEXSCREENER_TOKEN_URL}/{chain}/{contract_address}"
-    try:
-        async with session.get(
-            url,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                return []
-            pairs = await resp.json()
-            if not pairs or not isinstance(pairs, list):
-                return []
-            # Use the first pair's info.socials
-            for pair in pairs:
-                info = pair.get("info", {})
-                socials = info.get("socials") or []
-                if socials:
-                    return socials
+    cached = get_cached(contract_address)
+    if cached is not None:
+        pairs = cached
+    else:
+        url = f"{_DEXSCREENER_TOKEN_URL}/{chain}/{contract_address}"
+        try:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return []
+                pairs = await resp.json()
+                if not pairs or not isinstance(pairs, list):
+                    return []
+                set_cached(contract_address, pairs)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             return []
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        return []
+    # Use the first pair's info.socials
+    for pair in pairs:
+        info = pair.get("info", {})
+        socials = info.get("socials") or []
+        if socials:
+            return socials
+    return []
 
 
 async def _fetch_twitter_mentions(
@@ -352,7 +358,7 @@ async def enrich_social_sentiment(
         reddit_mentions = await _fetch_reddit_mentions(
             token.ticker, token.token_name, session,
         )
-        await asyncio.sleep(3.0)  # respect Reddit rate limits
+        await asyncio.sleep(1.0)  # respect Reddit rate limits
 
         # 2. LunarCrush (only if API key is configured)
         lunarcrush_data: dict = {}
@@ -364,26 +370,35 @@ async def enrich_social_sentiment(
         # 3. Fetch DexScreener social links for Twitter/Telegram/GitHub checks
         token_socials: list = []
         dex_info: dict = {}
-        try:
-            dex_url = f"{_DEXSCREENER_TOKEN_URL}/{token.chain}/{token.contract_address}"
-            async with session.get(
-                dex_url,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    pairs = await resp.json()
-                    if pairs and isinstance(pairs, list):
-                        for pair in pairs:
-                            info = pair.get("info", {})
-                            socials = info.get("socials") or []
-                            if socials:
-                                token_socials = socials
-                                dex_info = info
-                                break
-                            if not dex_info and info:
-                                dex_info = info
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            logger.debug("Failed to fetch DexScreener socials", ticker=token.ticker)
+        cached_pairs = get_cached(token.contract_address)
+        if cached_pairs is not None:
+            pairs = cached_pairs
+        else:
+            pairs = None
+            try:
+                dex_url = f"{_DEXSCREENER_TOKEN_URL}/{token.chain}/{token.contract_address}"
+                async with session.get(
+                    dex_url,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        pairs = await resp.json()
+                        if pairs and isinstance(pairs, list):
+                            set_cached(token.contract_address, pairs)
+                        else:
+                            pairs = None
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                logger.debug("Failed to fetch DexScreener socials", ticker=token.ticker)
+        if pairs and isinstance(pairs, list):
+            for pair in pairs:
+                info = pair.get("info", {})
+                socials = info.get("socials") or []
+                if socials:
+                    token_socials = socials
+                    dex_info = info
+                    break
+                if not dex_info and info:
+                    dex_info = info
 
         # 4. Twitter mention detection
         twitter_mentions = 0

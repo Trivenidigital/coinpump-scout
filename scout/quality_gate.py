@@ -38,10 +38,10 @@ class QualityGate:
             return self._reject(f"top3_concentration_{token.top3_wallet_concentration:.2f}", token)
 
         # Gate 3: unique buyers >= MIN_UNIQUE_BUYERS
-        # H3: Skip when HELIUS_API_KEY is not set (unique_buyers will always be 0)
-        if self.settings.HELIUS_API_KEY and self.settings.HELIUS_API_KEY.strip():
-            if token.unique_buyers_1h < self.settings.MIN_UNIQUE_BUYERS:
-                return self._reject(f"unique_buyers_{token.unique_buyers_1h}", token)
+        # Skip when unique_buyers is 0 — could mean Helius key is missing OR
+        # Helius is rate-limited/out of credits. Enforcing on 0 blocks everything.
+        if token.unique_buyers_1h > 0 and token.unique_buyers_1h < self.settings.MIN_UNIQUE_BUYERS:
+            return self._reject(f"unique_buyers_{token.unique_buyers_1h}", token)
 
         # Gate 4: token age < MAX_TOKEN_AGE_HOURS
         if token.token_age_days * 24 > self.settings.MAX_TOKEN_AGE_HOURS:
@@ -53,9 +53,9 @@ class QualityGate:
             return self._reject(f"low_vol_acceleration_{vol_accel:.1f}x", token)
 
         # Gate 6: holder growth > MIN_HOLDER_GROWTH_PER_HOUR
-        # Skip when HELIUS_API_KEY is not set — holder_count is capped at ~20
-        # by Rugcheck, making growth always 0 and rejecting everything.
-        if self.settings.HELIUS_API_KEY and self.settings.HELIUS_API_KEY.strip():
+        # Skip when holder_count <= 20 (Rugcheck cap) — means Helius didn't
+        # enrich (key missing, rate-limited, or out of credits).
+        if token.holder_count > 20:
             growth = await self._check_holder_growth(token)
             if growth is not None and growth < self.settings.MIN_HOLDER_GROWTH_PER_HOUR:
                 return self._reject(f"slow_holder_growth_{growth:.1f}/hr", token)

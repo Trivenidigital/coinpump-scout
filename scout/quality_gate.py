@@ -48,6 +48,23 @@ class QualityGate:
         if token_age_minutes < self.settings.MIN_TOKEN_AGE_MINUTES:
             return self._reject(f"token_too_new_{token_age_minutes:.0f}min", token)
 
+        # Gate 4c: launch rug pattern — fresh token with heavy sell pressure
+        # Tokens < 30min old with sell ratio > 60% = coordinated dump
+        total_txns = token.buys_1h + token.sells_1h
+        if token_age_minutes < 30 and total_txns > 10:
+            sell_ratio = token.sells_1h / total_txns
+            if sell_ratio > 0.60:
+                return self._reject(
+                    f"launch_dump_{sell_ratio:.0%}sells_{token_age_minutes:.0f}min", token
+                )
+
+        # Gate 4d: fresh token with price already crashing
+        # Token < 60min old but 5m price dropping > 10% = dump in progress
+        if token_age_minutes < 60 and token.price_change_5m < -10:
+            return self._reject(
+                f"fresh_token_dumping_{token.price_change_5m:.0f}%_5m", token
+            )
+
         # Gate 4b: token age < MAX_TOKEN_AGE_HOURS
         if token.token_age_days * 24 > self.settings.MAX_TOKEN_AGE_HOURS:
             return self._reject(f"token_too_old_{token.token_age_days:.1f}d", token)

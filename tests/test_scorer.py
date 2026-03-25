@@ -539,6 +539,7 @@ class TestRawMax:
             "has_news": 7,
             "bullish_news": 8,
             "volume_accelerating": 10,
+            "price_momentum_100pct": 25,  # mutually exclusive with 50pct
         }
         expected_max = sum(signal_max_points.values())
         assert RAW_MAX == expected_max, f"RAW_MAX={RAW_MAX} but signal sum={expected_max}"

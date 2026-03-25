@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     MIN_VOL_ACCELERATION: float = 2.0
     MIN_UNIQUE_BUYERS: int = 10
     MAX_TOP3_CONCENTRATION: float = 40.0  # percentage
+    MAX_DEPLOYER_SUPPLY_PCT: float = 20.0  # percentage
     MAX_TOKEN_AGE_HOURS: int = 24
     MIN_HOLDER_GROWTH_PER_HOUR: int = 5
 

@@ -15,6 +15,7 @@ import structlog
 
 from scout.config import Settings
 from scout.db import Database
+from scout.ingestion._dexscreener_cache import get_cached, set_cached
 from scout.ingestion._helius import HELIUS_API, HELIUS_RPC, helius_request, helius_rpc_url
 from scout.ingestion.cex_monitor import check_cex_listing
 from scout.models import CandidateToken
@@ -148,19 +149,24 @@ async def check_liquidity_lock(
     """
     defaults: dict = {"liquidity_locked": False, "lock_source": None}
 
-    # Query DexScreener for pair data (works for any chain)
-    url = f"{DEXSCREENER_PAIR_URL}/{chain}/{mint}"
-    try:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return defaults
-            pairs = await resp.json()
-    except Exception:
-        logger.warning("Liquidity lock check failed (DexScreener)", contract_address=mint, exc_info=True)
-        return defaults
+    # Query DexScreener for pair data (works for any chain) — use TTL cache
+    cached = get_cached(mint)
+    if cached is not None:
+        pairs = cached
+    else:
+        url = f"{DEXSCREENER_PAIR_URL}/{chain}/{mint}"
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return defaults
+                pairs = await resp.json()
+        except Exception:
+            logger.warning("Liquidity lock check failed (DexScreener)", contract_address=mint, exc_info=True)
+            return defaults
 
-    if not pairs or not isinstance(pairs, list):
-        return defaults
+        if not pairs or not isinstance(pairs, list):
+            return defaults
+        set_cached(mint, pairs)
 
     for pair in pairs:
         # Check for explicit lock info in DexScreener response
@@ -291,60 +297,7 @@ async def check_holder_distribution(
 
 
 # ------------------------------------------------------------------
-# 5. Whale Alert (Large Transactions)
-# ------------------------------------------------------------------
-
-async def check_whale_activity(
-    mint: str,
-    session: aiohttp.ClientSession,
-    settings: Settings,
-) -> dict:
-    """Count recent large transactions (> 1 SOL equivalent) for *mint*.
-
-    .. deprecated::
-        ``whale_txns_1h`` is now computed inside ``check_smart_money`` to
-        avoid a redundant Helius API call. This function is retained for
-        backward-compatibility but is no longer called from
-        ``enrich_onchain_signals``.
-
-    Returns:
-        {"whale_txns_1h": int}
-    """
-    defaults: dict = {"whale_txns_1h": 0}
-
-    if not settings.HELIUS_API_KEY:
-        return defaults
-
-    url = f"{HELIUS_API}/addresses/{mint}/transactions"
-    params = {"api-key": settings.HELIUS_API_KEY, "limit": 50, "type": "SWAP"}
-
-    try:
-        txns = await helius_request(session, "get", url, params=params)
-        if not txns or not isinstance(txns, list):
-            return defaults
-    except Exception:
-        logger.warning("Whale activity check failed", contract_address=mint, exc_info=True)
-        return defaults
-
-    whale_count = 0
-    for txn in txns:
-        fee_payer = txn.get("feePayer", "")
-        native_transfers = txn.get("nativeTransfers", [])
-
-        # Sum SOL spent by the fee payer (buyer) in this transaction
-        sol_spent = 0.0
-        for nt in native_transfers:
-            if nt.get("fromUserAccount") == fee_payer:
-                sol_spent += abs(float(nt.get("amount", 0))) / 1e9
-
-        if sol_spent > 1.0:
-            whale_count += 1
-
-    return {"whale_txns_1h": whale_count}
-
-
-# ------------------------------------------------------------------
-# 6. Multi-DEX Listing Check (Jupiter route plans)
+# 5. Multi-DEX Listing Check (Jupiter route plans)
 # ------------------------------------------------------------------
 
 _JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote"

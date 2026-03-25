@@ -53,9 +53,12 @@ class QualityGate:
             return self._reject(f"low_vol_acceleration_{vol_accel:.1f}x", token)
 
         # Gate 6: holder growth > MIN_HOLDER_GROWTH_PER_HOUR
-        growth = await self._check_holder_growth(token)
-        if growth is not None and growth < self.settings.MIN_HOLDER_GROWTH_PER_HOUR:
-            return self._reject(f"slow_holder_growth_{growth:.1f}/hr", token)
+        # Skip when HELIUS_API_KEY is not set — holder_count is capped at ~20
+        # by Rugcheck, making growth always 0 and rejecting everything.
+        if self.settings.HELIUS_API_KEY and self.settings.HELIUS_API_KEY.strip():
+            growth = await self._check_holder_growth(token)
+            if growth is not None and growth < self.settings.MIN_HOLDER_GROWTH_PER_HOUR:
+                return self._reject(f"slow_holder_growth_{growth:.1f}/hr", token)
 
         logger.info("Quality gate PASSED", token=token.token_name, ticker=token.ticker)
         return {"pass": True, "reason": None}

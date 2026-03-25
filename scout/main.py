@@ -191,10 +191,11 @@ async def run_cycle(
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
 
     # Stage 3: First-pass score (without Helius signals) to filter candidates
+    _helius_up = bool(_real_helius_key)
     pre_scored = []
     for token in enriched:
         previous_scores = await db.get_recent_scores(token.contract_address)
-        points, signals = score(token, settings, previous_scores=previous_scores)
+        points, signals = score(token, settings, previous_scores=previous_scores, helius_available=_helius_up)
         await db.log_score(token.contract_address, points)
         updated = token.model_copy(update={"quant_score": points})
         if points >= settings.MIN_SCORE:
@@ -281,7 +282,7 @@ async def run_cycle(
     scored = []
     for token, old_signals in pre_scored:
         previous_scores = await db.get_recent_scores(token.contract_address)
-        points, signals = score(token, settings, previous_scores=previous_scores)
+        points, signals = score(token, settings, previous_scores=previous_scores, helius_available=_helius_up)
         await db.log_score(token.contract_address, points)
         updated = token.model_copy(update={"quant_score": points})
         await db.upsert_candidate(updated)

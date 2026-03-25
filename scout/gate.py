@@ -44,8 +44,10 @@ async def evaluate(
     if narrative_score is not None:
         conviction = (quant_score * settings.QUANT_WEIGHT) + (narrative_score * settings.NARRATIVE_WEIGHT)
     else:
-        # No narrative score — use quant-only with higher threshold (M3)
-        conviction = quant_score * settings.QUANT_WEIGHT
+        # No narrative score — use quant directly with separate threshold (M3).
+        # Applying QUANT_WEIGHT (0.6) here double-penalizes: the score is already
+        # on a 0-100 scale, and the threshold is already lower.
+        conviction = float(quant_score)
 
     # M3: Use higher threshold when narrative is unavailable
     threshold = settings.CONVICTION_THRESHOLD if narrative_score is not None else settings.QUANT_ONLY_CONVICTION_THRESHOLD

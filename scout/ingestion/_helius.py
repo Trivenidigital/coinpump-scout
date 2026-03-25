@@ -18,7 +18,7 @@ HELIUS_DELAY = 0.2
 # Daily call counter — auto-disable at limit to avoid burning credits
 _daily_calls = 0
 _daily_reset_time = 0.0
-DAILY_CALL_LIMIT = 300_000  # 10M/month ≈ 333K/day, leave buffer
+DAILY_CALL_LIMIT = 150_000  # 5M/month ≈ 166K/day, leave buffer
 
 
 _helius_semaphore_loop: asyncio.AbstractEventLoop | None = None
@@ -60,10 +60,12 @@ async def helius_request(
         _daily_reset_time = now
 
     if _daily_calls >= DAILY_CALL_LIMIT:
-        logger.warning("Helius daily limit reached", calls=_daily_calls, limit=DAILY_CALL_LIMIT)
+        logger.warning("Helius daily limit reached — auto-disabled", calls=_daily_calls, limit=DAILY_CALL_LIMIT)
         return None
 
     _daily_calls += 1
+    if _daily_calls == int(DAILY_CALL_LIMIT * 0.8):
+        logger.warning("Helius 80% daily limit warning", calls=_daily_calls, limit=DAILY_CALL_LIMIT)
 
     for attempt in range(_MAX_RETRIES):
         need_retry = False

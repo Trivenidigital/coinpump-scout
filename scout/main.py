@@ -561,9 +561,11 @@ async def main() -> None:
 
                 # BL-033: Heartbeat logging every N cycles
                 if cycle_count % heartbeat_interval == 0:
+                    from scout.ingestion._helius import get_daily_call_count
                     logger.info(
                         "Heartbeat",
                         cycles_completed=cycle_count,
+                        helius_calls_today=get_daily_call_count(),
                         **cumulative,
                     )
 

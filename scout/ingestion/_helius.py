@@ -1,6 +1,7 @@
 """Shared Helius API utilities — single semaphore for rate limiting."""
 
 import asyncio
+import time
 
 import aiohttp
 import structlog
@@ -14,6 +15,11 @@ HELIUS_API = "https://api.helius.xyz/v0"
 _helius_semaphore: asyncio.Semaphore | None = None
 HELIUS_DELAY = 0.2
 
+# Daily call counter — auto-disable at limit to avoid burning credits
+_daily_calls = 0
+_daily_reset_time = 0.0
+DAILY_CALL_LIMIT = 300_000  # 10M/month ≈ 333K/day, leave buffer
+
 
 _helius_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
@@ -23,7 +29,7 @@ def _get_helius_semaphore() -> asyncio.Semaphore:
     global _helius_semaphore, _helius_semaphore_loop
     loop = asyncio.get_running_loop()
     if _helius_semaphore is None or _helius_semaphore_loop is not loop:
-        _helius_semaphore = asyncio.Semaphore(5)
+        _helius_semaphore = asyncio.Semaphore(3)  # Reduced from 5 to conserve credits
         _helius_semaphore_loop = loop
     return _helius_semaphore
 
@@ -47,6 +53,18 @@ async def helius_request(
     Semaphore is held only during the actual request, released before
     retry backoff sleeps to avoid blocking other callers.
     """
+    global _daily_calls, _daily_reset_time
+    now = time.monotonic()
+    if now - _daily_reset_time > 86400:
+        _daily_calls = 0
+        _daily_reset_time = now
+
+    if _daily_calls >= DAILY_CALL_LIMIT:
+        logger.warning("Helius daily limit reached", calls=_daily_calls, limit=DAILY_CALL_LIMIT)
+        return None
+
+    _daily_calls += 1
+
     for attempt in range(_MAX_RETRIES):
         need_retry = False
         async with _get_helius_semaphore():
@@ -80,3 +98,8 @@ async def helius_request(
                 await asyncio.sleep(wait)
     logger.warning("Helius request failed after retries", reason="rate_limited_429", attempts=_MAX_RETRIES)
     return None
+
+
+def get_daily_call_count() -> int:
+    """Return current daily Helius API call count."""
+    return _daily_calls

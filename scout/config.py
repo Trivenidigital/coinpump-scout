@@ -15,8 +15,8 @@ class Settings(BaseSettings):
 
     # Scanner
     SCAN_INTERVAL_SECONDS: int = 60
-    MIN_SCORE: int = 60
-    CONVICTION_THRESHOLD: int = 70
+    MIN_SCORE: int = 30
+    CONVICTION_THRESHOLD: int = 45
     QUANT_WEIGHT: float = 0.6
     NARRATIVE_WEIGHT: float = 0.4
     MAX_CANDIDATES_PER_CYCLE: int = 50
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     MAX_TOKEN_AGE_DAYS: int = 7
     MIN_VOL_LIQ_RATIO: float = 5.0
     MIN_LIQUIDITY_USD: float = 15_000
-    CHAINS: list[str] = ["solana", "base", "ethereum"]
+    CHAINS: list[str] = ["solana"]
     PUMPFUN_ENABLED: bool = True
 
     # Quality Gate

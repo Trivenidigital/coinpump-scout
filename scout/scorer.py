@@ -24,6 +24,8 @@ Scoring weights (must always document rationale):
 - on_coingecko: 8 points -- Listed on CoinGecko (strong CEX listing proxy)
 - multi_dex (dex_count >= 2): 5 points -- Traded on multiple DEXs (liquidity depth)
 - volume_accelerating: 10 points -- 5m volume > 2x average 5m pace (entry timing)
+- price_momentum_100pct: 25 points -- 1h price +100% with $50K+ volume (breakout)
+- price_momentum_50pct: 15 points -- 1h price +50% with $20K+ volume (strong move)
 
 Anti-signals (subtractive, not in RAW_MAX):
 - already_peaked: -20 points -- 5m price dropping >5% while 1h up >50% (buying the top)
@@ -45,7 +47,7 @@ from scout.models import CandidateToken
 # Excluded: Helius-dependent (holder_growth=25, unique_buyers=15, smart_money=10,
 # whale_buys=5, holder_gini=5, whale_txns=5, small_txn_ratio=5) and conditional
 # (score_velocity=10, social_mentions=15). Update if signals change.
-RAW_MAX = 139
+RAW_MAX = 164  # 139 + 25 (price_momentum_100pct)
 
 
 def score(
@@ -129,12 +131,20 @@ def score(
         points += 15
         signals.append("social_mentions")
 
-    # Signal 6: Buy Pressure Ratio -- 15 points (BL-011)
-    # Best wash-trade discriminator from existing API data
+    # Signal 6: Buy Pressure -- 15 points (BL-011)
+    # Use volume-weighted estimate: if price is rising with high volume,
+    # buy volume dominates even if transaction counts look balanced.
+    # Whales buy in fewer big trades, bots sell in many small ones.
     total_txns = token.buys_1h + token.sells_1h
     if total_txns > 0:
-        buy_ratio = token.buys_1h / total_txns
-        if buy_ratio > 0.65:
+        txn_buy_ratio = token.buys_1h / total_txns
+        # Volume-weighted: rising price + high volume = buy pressure
+        # price_change_1h > 20% with decent volume = strong buy pressure
+        volume_buy_signal = (
+            token.price_change_1h > 20
+            and token.volume_1h_usd > 10000
+        )
+        if txn_buy_ratio > 0.65 or volume_buy_signal:
             points += 15
             signals.append("buy_pressure")
 
@@ -262,10 +272,12 @@ def score(
 
     # Anti-signal: token already peaked and reversing
     # Price falling in last 5m but already up big in 1h = buying the top
+    already_peaked = False
     if settings.ENTRY_PEAK_PENALTY_ENABLED:
         if token.price_change_5m < -5 and token.price_change_1h > 50:
             points -= 20
             signals.append("already_peaked")
+            already_peaked = True
 
     # Volume acceleration: 5m volume disproportionately high vs 1h pace
     if token.volume_1h_usd > 0 and token.volume_5m_usd > 0:
@@ -273,6 +285,16 @@ def score(
         if token.volume_5m_usd > avg_5m_pace * 2:
             points += 10
             signals.append("volume_accelerating")
+
+    # Signal 24: Price momentum — catches explosive breakouts on any age token
+    # Skip if already_peaked — token is reversing, don't chase
+    if not already_peaked:
+        if token.price_change_1h > 100 and token.volume_1h_usd > 50000:
+            points += 25
+            signals.append("price_momentum_100pct")
+        elif token.price_change_1h > 50 and token.volume_1h_usd > 20000:
+            points += 15
+            signals.append("price_momentum_50pct")
 
     # BL-014: Co-occurrence multiplier (applied to raw points BEFORE normalization)
     # Vol/liq alone is the most commonly gamed signal. Penalize when isolated.

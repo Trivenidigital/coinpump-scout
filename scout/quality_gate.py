@@ -43,7 +43,12 @@ class QualityGate:
         if token.unique_buyers_1h > 0 and token.unique_buyers_1h < self.settings.MIN_UNIQUE_BUYERS:
             return self._reject(f"unique_buyers_{token.unique_buyers_1h}", token)
 
-        # Gate 4: token age < MAX_TOKEN_AGE_HOURS
+        # Gate 4a: token too new (rug bait) — must be at least MIN_TOKEN_AGE_MINUTES old
+        token_age_minutes = token.token_age_days * 24 * 60
+        if token_age_minutes < self.settings.MIN_TOKEN_AGE_MINUTES:
+            return self._reject(f"token_too_new_{token_age_minutes:.0f}min", token)
+
+        # Gate 4b: token age < MAX_TOKEN_AGE_HOURS
         if token.token_age_days * 24 > self.settings.MAX_TOKEN_AGE_HOURS:
             return self._reject(f"token_too_old_{token.token_age_days:.1f}d", token)
 

@@ -18,6 +18,16 @@ CHAIN_ID_MAP = {
 
 GOPLUS_BASE = "https://api.gopluslabs.io/api/v1/token_security"
 
+# --- GoPlus flag differences: scout vs sniper ---
+# Scout (pre-alert) checks:  is_honeypot, is_blacklisted, buy_tax >= 10%, sell_tax >= 10%
+# Sniper (pre-buy) checks:   is_mintable, is_honeypot, can_take_back_ownership, transfer_pausable
+#
+# The scout focuses on trade-ability (honeypot, blacklist, tax) because it gates
+# alerts — we don't want to surface tokens users can't trade.
+# The sniper focuses on rug-pull vectors (mintable, ownership takeback, pausable)
+# because it gates actual buys — it must block tokens that could rug post-purchase.
+# See solana-sniper/sniper/safety.py _DANGER_FLAGS for the sniper's list.
+
 
 async def is_safe(
     contract_address: str,

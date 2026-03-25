@@ -73,12 +73,12 @@ def score(
     if token.liquidity_usd < settings.MIN_LIQUIDITY_USD:
         return (0, [])
 
-    # BL-022: Wash trade detection -- top-3 wallet volume concentration > 40%
-    if token.top3_wallet_concentration > 0.40:
+    # BL-022: Wash trade detection -- top-3 wallet volume concentration
+    if token.top3_wallet_concentration > settings.MAX_TOP3_CONCENTRATION / 100.0:
         return (0, [])
 
-    # BL-023: Deployer supply concentration > 20% (rug risk)
-    if token.deployer_supply_pct > 0.20:
+    # BL-023: Deployer supply concentration (rug risk)
+    if token.deployer_supply_pct > settings.MAX_DEPLOYER_SUPPLY_PCT / 100.0:
         return (0, [])
 
     # Hard disqualifier: token already had its run

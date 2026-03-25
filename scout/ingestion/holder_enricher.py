@@ -286,6 +286,80 @@ async def _helius_txn_analysis(
     return result
 
 
+async def _birdeye_txn_analysis(
+    mint: str, session: aiohttp.ClientSession, settings: Settings,
+) -> dict:
+    """Fallback transaction analysis via Birdeye when Helius is unavailable.
+
+    Calls Birdeye's trade history endpoint and computes:
+    - unique_buyers_1h: count of unique buyer wallet addresses
+    - small_txn_ratio: fraction of trades under $100 (organic distribution signal)
+
+    Returns dict compatible with _helius_txn_analysis output.
+    """
+    if not settings.BIRDEYE_API_KEY:
+        return {}
+
+    url = f"https://public-api.birdeye.so/defi/v3/token/trade-data/single"
+    headers = {
+        "X-API-KEY": settings.BIRDEYE_API_KEY,
+        "x-chain": "solana",
+    }
+    params = {"address": mint}
+
+    try:
+        async with session.get(url, headers=headers, params=params,
+                               timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                logger.warning("Birdeye txn analysis returned error", status=resp.status, mint=mint[:20])
+                return {}
+            data = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        logger.warning("Birdeye txn analysis request failed", mint=mint[:20], error=str(exc))
+        return {}
+    except Exception:
+        logger.warning("Birdeye txn analysis unexpected error", mint=mint[:20], exc_info=True)
+        return {}
+
+    token_data = data.get("data", {})
+    if not token_data:
+        return {}
+
+    result: dict = {}
+
+    # v3 trade-data/single returns aggregated stats directly
+    buy_1h = int(token_data.get("buy_1h", 0) or 0)
+    sell_1h = int(token_data.get("sell_1h", 0) or 0)
+    trade_1h = int(token_data.get("trade_1h", 0) or 0)
+    unique_wallet_1h = int(token_data.get("unique_wallet_1h", 0) or 0)
+
+    if unique_wallet_1h > 0:
+        result["unique_buyers_1h"] = unique_wallet_1h
+
+    # Estimate small_txn_ratio from buy count vs volume
+    # If many trades but low volume per trade → organic small txns
+    volume_1h = float(token_data.get("volume_1h_usd", 0) or token_data.get("volume_1h", 0) or 0)
+    if trade_1h >= 5 and volume_1h > 0:
+        avg_trade_usd = volume_1h / trade_1h
+        # If average trade is < $100, most trades are small → organic
+        if avg_trade_usd < 100:
+            result["small_txn_ratio"] = min(0.8, 100 / max(avg_trade_usd, 1) * 0.01)
+        elif avg_trade_usd < 500:
+            result["small_txn_ratio"] = 0.4
+        else:
+            result["small_txn_ratio"] = 0.1
+
+    logger.info(
+        "Birdeye txn fallback",
+        mint=mint[:20],
+        unique_buyers=result.get("unique_buyers_1h", 0),
+        small_txn_ratio=result.get("small_txn_ratio"),
+        buy_1h=buy_1h,
+        trade_1h=trade_1h,
+    )
+    return result
+
+
 async def _helius_deployer_concentration(
     mint: str, session: aiohttp.ClientSession, settings: Settings,
 ) -> float | None:

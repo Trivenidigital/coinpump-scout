@@ -160,6 +160,8 @@ async def run_cycle(
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
 
+    await db.commit()  # Flush holder snapshots before scoring
+
     # === PASS 1 scoring: quant-only (no Helius signals) ===
     pre_scored = []
     for token in enriched:
@@ -176,6 +178,8 @@ async def run_cycle(
                 quant_score=points, signals_fired=signals,
                 disqualified=points == 0,
             )
+
+    await db.commit()  # Flush pass 1 scores
 
     # === PASS 2: Helius enrichment ONLY on tokens passing MIN_SCORE ===
     if _real_helius_key and pre_scored:
@@ -259,8 +263,8 @@ async def run_cycle(
                 disqualified=disqualified,
                 disqualify_reason=disqualify_reason,
             )
-        # Batch commit: flush all high-frequency writes for this token in one round-trip.
 
+    await db.commit()  # Flush stage 3 scores + candidates
 
     # Stage 3b: Quality gate (hard rejection filters before social/news enrichment)
     if scored:

@@ -142,10 +142,14 @@ async def run_cycle(
 
     stats["tokens_scanned"] = len(all_candidates)
 
-    # Enrich holders sequentially to respect Helius rate limits
+    # === PASS 1: Free enrichment (Rugcheck only, no Helius) ===
+    # Temporarily blank Helius key so enrich_holders only calls Rugcheck
+    _real_helius_key = settings.HELIUS_API_KEY
+    settings_lite = settings.model_copy(update={"HELIUS_API_KEY": ""})
+
     enriched = []
     for token in all_candidates:
-        enriched.append(await enrich_holders(token, session, settings))
+        enriched.append(await enrich_holders(token, session, settings_lite))
 
     # BL-020: Compute holder_growth_1h from previous snapshots
     for i, token in enumerate(enriched):
@@ -156,19 +160,55 @@ async def run_cycle(
                 growth = token.holder_count - prev
                 enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
 
-    # Stage 2c: On-chain signal enrichment
-    if settings.ONCHAIN_SIGNALS_ENABLED:
-        for i, token in enumerate(enriched):
-            enriched[i] = await enrich_onchain_signals(token, session, db, settings)
+    # === PASS 1 scoring: quant-only (no Helius signals) ===
+    pre_scored = []
+    for token in enriched:
+        previous_scores = await db.get_recent_scores(token.contract_address)
+        points, signals = score(token, settings, previous_scores=previous_scores, helius_available=False)
+        await db.log_score(token.contract_address, points)
+        updated = token.model_copy(update={"quant_score": points})
+        if points >= settings.MIN_SCORE:
+            pre_scored.append((updated, signals))
+        else:
+            await db.upsert_candidate(updated)
+            await db.log_signal_snapshot(
+                scan_cycle=scan_cycle, token=updated,
+                quant_score=points, signals_fired=signals,
+                disqualified=points == 0,
+            )
+
+    # === PASS 2: Helius enrichment ONLY on tokens passing MIN_SCORE ===
+    if _real_helius_key and pre_scored:
+        settings_full = settings.model_copy(update={"HELIUS_API_KEY": _real_helius_key})
+        for i, (token, _signals) in enumerate(pre_scored):
+            if token.chain == "solana" and token.holder_count <= 20:
+                token = await enrich_holders(token, session, settings_full)
+            if settings.ONCHAIN_SIGNALS_ENABLED and token.chain == "solana":
+                token = await enrich_onchain_signals(token, session, db, settings_full)
+            # Re-score with full Helius signals
+            previous_scores = await db.get_recent_scores(token.contract_address)
+            points, signals = score(token, settings, previous_scores=previous_scores, helius_available=True)
+            await db.log_score(token.contract_address, points)
+            updated = token.model_copy(update={"quant_score": points})
+            pre_scored[i] = (updated, signals)
+        logger.info("Helius deep enrichment complete", tokens_enriched=len(pre_scored))
+    elif not _real_helius_key and pre_scored:
+        # No Helius key — run on-chain signals with free APIs only
+        if settings.ONCHAIN_SIGNALS_ENABLED:
+            for i, (token, signals) in enumerate(pre_scored):
+                token = await enrich_onchain_signals(token, session, db, settings)
+                pre_scored[i] = (token, signals)
 
     # Data quality alert — catch dead signals
     dead_signals: list[str] = []
     total = len(enriched)
     if total > 0:
-        has_holder_count = sum(1 for t in enriched if t.holder_count > 20)
-        has_holder_growth = sum(1 for t in enriched if t.holder_growth_1h > 0)
-        has_unique_buyers = sum(1 for t in enriched if t.unique_buyers_1h > 0)
-        has_whale_buys = sum(1 for t in enriched if t.whale_buys > 0)
+        # Check across all enriched tokens (pass 1 + pass 2)
+        all_tokens = [t for t, _ in pre_scored] if pre_scored else enriched
+        has_holder_count = sum(1 for t in all_tokens if t.holder_count > 20)
+        has_holder_growth = sum(1 for t in all_tokens if t.holder_growth_1h > 0)
+        has_unique_buyers = sum(1 for t in all_tokens if t.unique_buyers_1h > 0)
+        has_whale_buys = sum(1 for t in all_tokens if t.whale_buys > 0)
 
         if has_holder_count == 0:
             dead_signals.append("holder_count (all capped at 20)")
@@ -183,15 +223,14 @@ async def run_cycle(
             logger.warning(
                 "Dead signals detected — scoring is degraded",
                 dead_signals=dead_signals,
-                tokens_checked=total,
+                tokens_checked=len(all_tokens),
             )
 
-    # Stage 3: Score
+    # Stage 3: All pre_scored tokens already passed MIN_SCORE in pass 1.
+    # After pass 2 re-scoring they proceed to quality gate + narrative.
     scored = []
-    for token in enriched:
-        previous_scores = await db.get_recent_scores(token.contract_address)
-        points, signals = score(token, settings, previous_scores=previous_scores)
-        await db.log_score(token.contract_address, points)
+    for token, signals in pre_scored:
+        points = token.quant_score or 0
         updated = token.model_copy(update={"quant_score": points})
         await db.upsert_candidate(updated)
 

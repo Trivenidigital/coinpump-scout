@@ -4,7 +4,7 @@ import pytest
 
 from scout.config import Settings
 from scout.models import CandidateToken
-from scout.scorer import score, confidence, _token_age_score, _market_cap_tier_score, RAW_MAX
+from scout.scorer import score, confidence, _token_age_score, _market_cap_tier_score, RAW_MAX, RAW_MAX_NO_HELIUS, RAW_MAX_FULL
 
 
 def _settings(**overrides) -> Settings:
@@ -542,4 +542,19 @@ class TestRawMax:
             "bullish_news": 8,
         }
         expected_max = sum(non_helius_signals.values())
-        assert RAW_MAX == expected_max, f"RAW_MAX={RAW_MAX} but non-Helius signal sum={expected_max}"
+        assert RAW_MAX_NO_HELIUS == expected_max, f"RAW_MAX_NO_HELIUS={RAW_MAX_NO_HELIUS} but non-Helius signal sum={expected_max}"
+
+    def test_raw_max_full_matches_all_signals(self):
+        """RAW_MAX_FULL must match the sum of ALL signal max points."""
+        all_signals = {
+            "vol_liq_ratio": 30, "market_cap_tier": 8, "holder_growth": 25,
+            "token_age": 10, "social_mentions": 15, "buy_pressure": 15,
+            "score_velocity": 10, "unique_buyers": 15, "solana_bonus": 5,
+            "small_txn_ratio": 5, "smart_money_buys": 10, "whale_buys": 5,
+            "liquidity_locked": 10, "volume_spike_5x": 15,
+            "holder_gini_healthy": 5, "whale_txns_1h": 5,
+            "has_twitter": 3, "has_telegram": 3, "has_github": 2,
+            "on_coingecko": 8, "multi_dex": 5, "has_news": 7, "bullish_news": 8,
+        }
+        expected_max = sum(all_signals.values())
+        assert RAW_MAX_FULL == expected_max, f"RAW_MAX_FULL={RAW_MAX_FULL} but all signal sum={expected_max}"

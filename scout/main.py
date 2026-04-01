@@ -457,10 +457,9 @@ async def main() -> None:
                     logger.info("Fresh pools from WebSocket", count=len(fresh_pools))
 
                 try:
-                    async with db.write_batch():
-                        stats = await run_cycle(
-                            settings, db, session, dry_run=args.dry_run
-                        )
+                    stats = await run_cycle(
+                        settings, db, session, dry_run=args.dry_run
+                    )
                     logger.info("Cycle complete", **stats)
                     for k in cumulative:
                         cumulative[k] += stats.get(k, 0)

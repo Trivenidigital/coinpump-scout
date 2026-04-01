@@ -5,6 +5,37 @@ import pytest
 from scout.config import Settings
 from scout.models import CandidateToken
 
+# Env vars that leak from .env and override Settings defaults in tests.
+_ENV_VARS_TO_CLEAR = [
+    "MIN_SCORE", "CONVICTION_THRESHOLD", "QUANT_ONLY_CONVICTION_THRESHOLD",
+    "CHAINS", "SCAN_INTERVAL_SECONDS", "MAX_MIROFISH_JOBS_PER_DAY",
+    "HELIUS_API_KEY", "MORALIS_API_KEY", "ANTHROPIC_API_KEY",
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "PAPER_MODE",
+    "PUMPFUN_ENABLED", "ONCHAIN_SIGNALS_ENABLED", "QUALITY_GATE_ENABLED",
+    "SOCIAL_ENRICHMENT_ENABLED", "TWITTER_SCOUT_ENABLED",
+    "BIRDEYE_API_KEY", "SOCIALDATA_API_KEY", "CRYPTOPANIC_API_KEY",
+    "GOPLUS_FAIL_CLOSED", "POOL_WATCHER_ENABLED",
+    "SMART_MONEY_WALLETS", "DISCORD_WEBHOOK_URL",
+    "REENTRY_MIN_CONVICTION", "REENTRY_DIP_PCT",
+    "MIN_LIQUIDITY_USD", "MAX_CANDIDATES_PER_CYCLE",
+    "SNIPER_DB_PATH", "INJECTIONS_DB_PATH",
+]
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    """Remove production env vars so Settings uses code defaults.
+
+    Also patches Settings to not read .env file during tests.
+    """
+    for var in _ENV_VARS_TO_CLEAR:
+        monkeypatch.delenv(var, raising=False)
+    # Prevent Pydantic BaseSettings from reading .env file
+    monkeypatch.setattr(
+        "scout.config.Settings.model_config",
+        {**Settings.model_config, "env_file": None},
+    )
+
 
 @pytest.fixture
 def settings_factory():

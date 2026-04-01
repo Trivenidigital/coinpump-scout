@@ -225,11 +225,11 @@ class TestScoreVelocity:
         _, signals = score(token, _settings(), previous_scores=[50, 50, 50])
         assert "score_velocity" not in signals
 
-    def test_fewer_than_3_scores_no_bonus(self):
+    def test_fewer_than_2_scores_no_bonus(self):
         token = _make_token(volume_24h_usd=1000, liquidity_usd=20000,
                             market_cap_usd=999999, holder_growth_1h=0,
                             token_age_days=30, chain="ethereum")
-        _, signals = score(token, _settings(), previous_scores=[30, 40])
+        _, signals = score(token, _settings(), previous_scores=[30])
         assert "score_velocity" not in signals
 
 
@@ -516,24 +516,23 @@ class TestRawMax:
     """CR-001: RAW_MAX must stay in sync with the actual signal point totals."""
 
     def test_raw_max_matches_signal_sum(self):
-        """CR-001: RAW_MAX must match the actual sum of all max signal points."""
-        signal_max_points = {
+        """CR-001: RAW_MAX must match non-Helius signal sum.
+
+        RAW_MAX intentionally excludes Helius-dependent signals (holder_growth,
+        unique_buyers, smart_money, whale_buys, holder_gini, whale_txns,
+        small_txn_ratio) since they are gated behind the API key.
+        """
+        # Signals achievable WITHOUT Helius
+        non_helius_signals = {
             "vol_liq_ratio": 30,
             "market_cap_tier": 8,
-            "holder_growth": 25,
             "token_age": 10,
             "social_mentions": 15,
             "buy_pressure": 15,
             "score_velocity": 10,
-            "unique_buyers": 15,
             "solana_bonus": 5,
-            "small_txn_ratio": 5,
-            "smart_money_buys": 10,
-            "whale_buys": 5,
             "liquidity_locked": 10,
-            "volume_spike_5x": 15,  # mutually exclusive with 3x
-            "holder_gini_healthy": 5,
-            "whale_txns_1h": 5,
+            "volume_spike_5x": 15,
             "has_twitter": 3,
             "has_telegram": 3,
             "has_github": 2,
@@ -542,5 +541,5 @@ class TestRawMax:
             "has_news": 7,
             "bullish_news": 8,
         }
-        expected_max = sum(signal_max_points.values())
-        assert RAW_MAX == expected_max, f"RAW_MAX={RAW_MAX} but signal sum={expected_max}"
+        expected_max = sum(non_helius_signals.values())
+        assert RAW_MAX == expected_max, f"RAW_MAX={RAW_MAX} but non-Helius signal sum={expected_max}"

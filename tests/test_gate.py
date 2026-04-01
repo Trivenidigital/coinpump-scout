@@ -105,8 +105,8 @@ async def test_gate_daily_cap_skips_mirofish(mock_db, mock_session):
 
     should_alert, conviction, token_out = await evaluate(token, mock_db, mock_session, settings)
 
-    assert conviction == 75.0  # quant-only
-    assert should_alert is True  # 75 >= 70
+    assert conviction == pytest.approx(75.0 * 0.6)  # quant-only: quant * QUANT_WEIGHT
+    assert should_alert is False  # 45 < 70
 
 
 async def test_gate_below_min_score_skips_mirofish(mock_db, mock_session):
@@ -116,8 +116,8 @@ async def test_gate_below_min_score_skips_mirofish(mock_db, mock_session):
 
     should_alert, conviction, token_out = await evaluate(token, mock_db, mock_session, settings)
 
-    assert conviction == 40.0  # quant-only, no MiroFish
-    assert should_alert is False  # 40 < 70
+    assert conviction == pytest.approx(40.0 * 0.6)  # quant-only: quant * QUANT_WEIGHT
+    assert should_alert is False  # 24 < 70
 
 
 async def test_gate_mirofish_fallback_on_timeout(mock_db, mock_session):

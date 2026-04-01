@@ -36,17 +36,19 @@ Hard disqualifiers:
 from scout.config import Settings
 from scout.models import CandidateToken
 
-# RAW_MAX reflects achievable max without Helius (disabled due to rate limiting).
-# Helius-dependent signals (holder_growth, unique_buyers, smart_money, whale_buys,
-# holder_gini, whale_txns, small_txn_ratio) are excluded from the denominator.
-# Update this if Helius is re-enabled or signals change.
-RAW_MAX = 154
+# RAW_MAX_NO_HELIUS: achievable max without Helius signals.
+# RAW_MAX_FULL: achievable max with all signals including Helius.
+# Two-pass gating uses NO_HELIUS for pass 1, FULL for pass 2.
+RAW_MAX_NO_HELIUS = 154
+RAW_MAX_FULL = 224
+RAW_MAX = RAW_MAX_NO_HELIUS  # Default for backwards compat
 
 
 def score(
     token: CandidateToken,
     settings: Settings,
     previous_scores: list[int] | None = None,
+    helius_available: bool = False,
 ) -> tuple[int, list[str]]:
     """Score a candidate token based on quantitative signals.
 
@@ -250,7 +252,8 @@ def score(
         signals.append("bullish_news")
 
     # BL-016: Normalize raw sum to 0-100 scale
-    normalized = min(100, int(points * 100 / RAW_MAX))
+    denominator = RAW_MAX_FULL if helius_available else RAW_MAX_NO_HELIUS
+    normalized = min(100, int(points * 100 / denominator))
 
     # BL-014: Co-occurrence multiplier
     # Vol/liq alone is the most commonly gamed signal. Penalize when isolated.

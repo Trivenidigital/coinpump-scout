@@ -1,5 +1,6 @@
 """Async SQLite database layer for CoinPump Scout."""
 
+import contextlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -64,6 +65,7 @@ class Database:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         self._conn: aiosqlite.Connection | None = None
+        self._in_batch = False  # True when inside write_batch() context
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -74,7 +76,9 @@ class Database:
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.execute("PRAGMA busy_timeout=5000")
+        await self._conn.execute("PRAGMA busy_timeout=10000")
+        await self._conn.execute("PRAGMA synchronous=FULL")
+        await self._conn.execute("PRAGMA wal_autocheckpoint=1000")
         await self._create_tables()
 
     async def close(self) -> None:
@@ -85,8 +89,24 @@ class Database:
 
     async def commit(self) -> None:
         """Explicitly commit pending writes (use for batching high-frequency writes)."""
-        if self._conn:
+        if self._conn and not self._in_batch:
             await self._conn.commit()
+
+    @contextlib.asynccontextmanager
+    async def write_batch(self):
+        """Hold all writes in a single transaction, commit once at the end.
+
+        Prevents DB corruption from fragmented transactions (150+ individual
+        commit cycles per scan). All write methods skip their individual
+        commits when inside a batch.
+        """
+        self._in_batch = True
+        try:
+            yield
+            if self._conn:
+                await self._conn.commit()
+        finally:
+            self._in_batch = False
 
     # ------------------------------------------------------------------
     # Schema
@@ -274,9 +294,8 @@ class Database:
                 ON CONFLICT(contract_address) DO UPDATE SET {update_set}""",
             values,
         )
-        # Commit immediately: candidates table is the primary persistence record.
-        # Analytics writes (log_score, log_holder_snapshot, etc.) remain batched.
-        await self._conn.commit()
+        if not self._in_batch:
+            await self._conn.commit()
 
     async def get_candidates_above_score(self, min_score: int) -> list[dict]:
         """Get candidates with quant_score >= min_score."""
@@ -305,7 +324,8 @@ class Database:
             "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
             (contract_address, chain, conviction_score, now, market_cap_usd),
         )
-        await self._conn.commit()
+        if not self._in_batch:
+            await self._conn.commit()
 
     async def get_daily_alert_count(self) -> int:
         """Count alerts fired today (UTC)."""
@@ -372,7 +392,8 @@ class Database:
             "INSERT INTO mirofish_jobs (contract_address, created_at) VALUES (?, ?)",
             (contract_address, now),
         )
-        await self._conn.commit()
+        if not self._in_batch:
+            await self._conn.commit()
         return cursor.lastrowid
 
     async def rollback_mirofish_job(self, job_id: int) -> None:
@@ -383,7 +404,8 @@ class Database:
             "DELETE FROM mirofish_jobs WHERE id = ?",
             (job_id,),
         )
-        await self._conn.commit()
+        if not self._in_batch:
+            await self._conn.commit()
 
     # ------------------------------------------------------------------
     # Score history (BL-013)
@@ -565,7 +587,8 @@ class Database:
             "INSERT INTO vol_gate_snapshots (contract_address, vol_5min, recorded_at) VALUES (?, ?, ?)",
             (contract_address, volume, now),
         )
-        await self._conn.commit()
+        if not self._in_batch:
+            await self._conn.commit()
 
     async def get_prev_vol_gate_snapshot(self, contract_address: str) -> float | None:
         """Get the previous volume gate snapshot for acceleration comparison."""
@@ -619,4 +642,5 @@ class Database:
                 f"DELETE FROM {table} WHERE {col} < ?",
                 (cutoff,),
             )
-        await self._conn.commit()
+        if not self._in_batch:
+            await self._conn.commit()

@@ -221,7 +221,7 @@ async def run_cycle(
                 disqualify_reason=disqualify_reason,
             )
         # Batch commit: flush all high-frequency writes for this token in one round-trip.
-        await db.commit()
+
 
     # Stage 3b: Quality gate (hard rejection filters before social/news enrichment)
     if scored:
@@ -263,7 +263,7 @@ async def run_cycle(
                 conviction_score=conviction,
                 alerted=False,
             )
-            await db.commit()
+    
             continue
 
         # Stage 6: Safety check + alert
@@ -283,7 +283,7 @@ async def run_cycle(
                 conviction_score=conviction,
                 alerted=False, safe=False,
             )
-            await db.commit()
+    
             continue
 
         # Dedup: skip if already alerted recently
@@ -321,7 +321,7 @@ async def run_cycle(
                     conviction_score=conviction,
                     alerted=False,
                 )
-                await db.commit()
+        
                 continue
 
         if dry_run:
@@ -347,7 +347,7 @@ async def run_cycle(
             conviction_score=conviction,
             alerted=True, safe=True,
         )
-        await db.commit()
+
 
     # Log data quality stats in cycle output
     stats["dead_signals"] = len(dead_signals) if dead_signals else 0
@@ -418,9 +418,10 @@ async def main() -> None:
                     logger.info("Fresh pools from WebSocket", count=len(fresh_pools))
 
                 try:
-                    stats = await run_cycle(
-                        settings, db, session, dry_run=args.dry_run
-                    )
+                    async with db.write_batch():
+                        stats = await run_cycle(
+                            settings, db, session, dry_run=args.dry_run
+                        )
                     logger.info("Cycle complete", **stats)
                     for k in cumulative:
                         cumulative[k] += stats.get(k, 0)

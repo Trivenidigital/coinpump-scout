@@ -324,8 +324,8 @@ class Database:
             "INSERT INTO alerts (contract_address, chain, conviction_score, alerted_at, market_cap_usd) VALUES (?, ?, ?, ?, ?)",
             (contract_address, chain, conviction_score, now, market_cap_usd),
         )
-        if not self._in_batch:
-            await self._conn.commit()
+        # Always commit alerts immediately — sniper reads this table cross-process
+        await self._conn.commit()
 
     async def get_daily_alert_count(self) -> int:
         """Count alerts fired today (UTC)."""

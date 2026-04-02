@@ -140,17 +140,12 @@ def score(
             signals.append("score_velocity")
 
     # Signal 8: Unique Buyers -- 15 points (BL-021)
-    # High unique buyer count relative to total txns = organic community buying
-    # Fallback: if DexScreener buy/sell data missing, use absolute count (>= 20 unique buyers)
-    if token.unique_buyers_1h > 0:
-        if total_txns > 0:
-            buyer_ratio = token.unique_buyers_1h / total_txns
-            if buyer_ratio > 0.50:
-                points += 15
-                signals.append("unique_buyers")
-        elif token.unique_buyers_1h >= 20:
-            points += 15
-            signals.append("unique_buyers")
+    # unique_buyers_1h comes from Helius (last 50 txns sample), not full 1h.
+    # Ratio comparison against DexScreener buys_1h is apples-to-oranges.
+    # Use absolute threshold: >= 10 unique wallets in the sample = organic buying.
+    if token.unique_buyers_1h >= 10:
+        points += 15
+        signals.append("unique_buyers")
 
     # Signal 9: Solana Chain Bonus -- 5 points (BL-030)
     # Meme premium: Solana has disproportionate meme coin activity

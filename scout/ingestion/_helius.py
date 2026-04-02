@@ -55,12 +55,18 @@ def _cache_key(url: str, **kwargs) -> str:
 
 
 def _cache_ttl(url: str, **kwargs) -> int:
-    """Choose TTL based on request type."""
+    """Choose TTL based on request type.
+
+    getTokenAccounts is NOT cached (TTL=0) — holder_growth needs fresh
+    data every cycle to detect changes. getAsset is stable and cached.
+    """
     payload = kwargs.get("json", {})
     if isinstance(payload, dict):
         method = payload.get("method", "")
-        if method in ("getTokenAccounts", "getAsset"):
-            return _CACHE_TTL_HOLDERS  # 10 min for holder/asset data
+        if method == "getTokenAccounts":
+            return 0  # Never cache — holder_growth needs fresh counts
+        if method == "getAsset":
+            return _CACHE_TTL_HOLDERS  # 10 min for asset metadata
     return _CACHE_TTL_DEFAULT  # 5 min for transactions
 
 

@@ -141,9 +141,14 @@ def score(
 
     # Signal 8: Unique Buyers -- 15 points (BL-021)
     # High unique buyer count relative to total txns = organic community buying
-    if token.unique_buyers_1h > 0 and total_txns > 0:
-        buyer_ratio = token.unique_buyers_1h / total_txns
-        if buyer_ratio > 0.50:
+    # Fallback: if DexScreener buy/sell data missing, use absolute count (>= 20 unique buyers)
+    if token.unique_buyers_1h > 0:
+        if total_txns > 0:
+            buyer_ratio = token.unique_buyers_1h / total_txns
+            if buyer_ratio > 0.50:
+                points += 15
+                signals.append("unique_buyers")
+        elif token.unique_buyers_1h >= 20:
             points += 15
             signals.append("unique_buyers")
 

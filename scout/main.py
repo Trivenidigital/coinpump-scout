@@ -185,7 +185,7 @@ async def run_cycle(
     if _real_helius_key and pre_scored:
         settings_full = settings.model_copy(update={"HELIUS_API_KEY": _real_helius_key})
         for i, (token, _signals) in enumerate(pre_scored):
-            if token.chain == "solana" and token.holder_count <= 20:
+            if token.chain == "solana":
                 token = await enrich_holders(token, session, settings_full)
             if settings.ONCHAIN_SIGNALS_ENABLED and token.chain == "solana":
                 token = await enrich_onchain_signals(token, session, db, settings_full)

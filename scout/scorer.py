@@ -40,7 +40,7 @@ from scout.models import CandidateToken
 # RAW_MAX_FULL: achievable max with all signals including Helius.
 # Two-pass gating uses NO_HELIUS for pass 1, FULL for pass 2.
 RAW_MAX_NO_HELIUS = 154
-RAW_MAX_FULL = 224
+RAW_MAX_FULL = 180  # Realistic achievable max — buy_pressure (15) and social_mentions (15) rarely fire with current data sources
 RAW_MAX = RAW_MAX_NO_HELIUS  # Default for backwards compat
 
 

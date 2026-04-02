@@ -182,11 +182,12 @@ async def run_cycle(
             if settings.ONCHAIN_SIGNALS_ENABLED and token.chain == "solana":
                 token = await enrich_onchain_signals(token, session, db, settings_full)
             # Log real holder count (post-Helius) and compute growth
+            # Compare against 15-min-old snapshot to smooth out cycle-to-cycle fluctuations
             if token.holder_count > 20:
-                prev = await db.get_previous_holder_count(token.contract_address)
                 await db.log_holder_snapshot(token.contract_address, token.holder_count)
-                if prev is not None and prev > 20:  # Only compare real Helius counts
-                    growth = token.holder_count - prev
+                older = await db.get_holder_snapshot_older_than(token.contract_address, minutes=15)
+                if older is not None and older[0] > 20:
+                    growth = token.holder_count - older[0]
                     if growth > 0:
                         token = token.model_copy(update={"holder_growth_1h": growth})
             # Re-score with full Helius signals

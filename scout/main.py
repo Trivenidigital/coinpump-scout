@@ -151,16 +151,8 @@ async def run_cycle(
     for token in all_candidates:
         enriched.append(await enrich_holders(token, session, settings_lite))
 
-    # BL-020: Compute holder_growth_1h from previous snapshots
-    for i, token in enumerate(enriched):
-        if token.holder_count > 0:
-            prev = await db.get_previous_holder_count(token.contract_address)
-            await db.log_holder_snapshot(token.contract_address, token.holder_count)
-            if prev is not None:
-                growth = token.holder_count - prev
-                enriched[i] = token.model_copy(update={"holder_growth_1h": max(0, growth)})
-
-    await db.commit()  # Flush holder snapshots before scoring
+    # BL-020: holder_growth computed in pass 2 after Helius enrichment (real counts)
+    # Pass 1 Rugcheck counts are capped at ~20, don't log them as snapshots
 
     # === PASS 1 scoring: quant-only (no Helius signals) ===
     pre_scored = []
@@ -193,9 +185,10 @@ async def run_cycle(
             if token.holder_count > 20:
                 prev = await db.get_previous_holder_count(token.contract_address)
                 await db.log_holder_snapshot(token.contract_address, token.holder_count)
-                if prev is not None and prev > 20:
+                if prev is not None and prev > 20:  # Only compare real Helius counts
                     growth = token.holder_count - prev
-                    token = token.model_copy(update={"holder_growth_1h": max(0, growth)})
+                    if growth > 0:
+                        token = token.model_copy(update={"holder_growth_1h": growth})
             # Re-score with full Helius signals
             previous_scores = await db.get_recent_scores(token.contract_address)
             points, signals = score(token, settings, previous_scores=previous_scores, helius_available=True)

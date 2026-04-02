@@ -64,7 +64,7 @@ def _cache_ttl(url: str, **kwargs) -> int:
     if isinstance(payload, dict):
         method = payload.get("method", "")
         if method == "getTokenAccounts":
-            return 0  # Never cache — holder_growth needs fresh counts
+            return 120  # 2 min cache — balance between fresh holder_growth and credit burn
         if method == "getAsset":
             return _CACHE_TTL_HOLDERS  # 10 min for asset metadata
     return _CACHE_TTL_DEFAULT  # 5 min for transactions

@@ -78,12 +78,16 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA busy_timeout=10000")
         await self._conn.execute("PRAGMA synchronous=FULL")
-        await self._conn.execute("PRAGMA wal_autocheckpoint=1000")
+        await self._conn.execute("PRAGMA wal_autocheckpoint=100")  # Checkpoint every 100 pages (~400KB) to keep WAL small
         await self._create_tables()
 
     async def close(self) -> None:
-        """Close the database connection."""
+        """Close the database connection cleanly — checkpoint WAL first."""
         if self._conn:
+            try:
+                await self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass  # Best effort — don't prevent close
             await self._conn.close()
             self._conn = None
 
